@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+
+# These folders contain private visitor data. Do not commit them.
+input/
+extracted/
+output/
+source_links.json
