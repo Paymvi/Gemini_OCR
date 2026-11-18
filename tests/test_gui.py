@@ -52,6 +52,17 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(self.app.items, [])
         self.assertEqual(pdf.read_bytes(), before)  # source PDF untouched
 
+    def test_night_mode_toggles_and_is_remembered(self):
+        env_file = self.tmp / ".env"
+        with mock.patch.object(pipeline, "ENV_PATH", env_file):
+            self.app.toggle_night()
+            self.assertEqual(gui.ttk.Style(self.root).theme_use(), "clam")
+            self.assertEqual(self.app.btn_night.cget("text"), "Day mode")
+            self.assertIn("NIGHT_MODE=1", env_file.read_text())
+            self.app.toggle_night()
+            self.assertEqual(gui.ttk.Style(self.root).theme_use(), self.app.day_theme)
+            self.assertIn("NIGHT_MODE=0", env_file.read_text())
+
     def test_review_edit_and_save_with_a_failed_file(self):
         good = write_pdf(self.tmp / "good.pdf", "1")
         bad = write_pdf(self.tmp / "bad.pdf", "2")

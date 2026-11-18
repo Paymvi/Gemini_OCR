@@ -48,11 +48,11 @@ LOG_DIR = pipeline.ROOT / "logs"
 log = logging.getLogger("waiver_app")
 
 REVIEW_BG = "#fff2cc"  # same yellow the spreadsheet uses for cells to review
-ERROR_FG = "#a4262c"
-OK_FG = "#1b6e35"
-ACTIVE_FG = "#0b5cad"
-MUTED_FG = "#5b6470"
-WARN_FG = "#8a5a00"
+DAY = {"fg": "black", "field": "white", "error": "#a4262c", "ok": "#1b6e35", "active": "#0b5cad",
+       "muted": "#5b6470", "warn": "#8a5a00"}
+NIGHT = {"fg": "#e6e6e6", "bg": "#1f1f1f", "field": "#2b2b2b", "button": "#333333", "hover": "#3d3d3d",
+         "select": "#2f5a8a", "border": "#454545", "error": "#ff8a8a", "ok": "#7ed69a",
+         "active": "#79b8ff", "muted": "#a0a8b3", "warn": "#e0b45c"}
 
 FILE_STATUS = {
     "ready": "Ready",
@@ -130,6 +130,7 @@ class App:
         self.run_problem = None  # FriendlyError that stopped the last run, if any
         self.output_mode = tk.StringVar(value="new")
         self.only_review = tk.BooleanVar(value=False)
+        self.night = tk.BooleanVar(value=os.getenv("NIGHT_MODE", "") == "1")
 
         scale = root.winfo_fpixels("1i") / 96.0
         self.px = lambda n: int(n * scale)
@@ -157,15 +158,9 @@ class App:
         style = ttk.Style(root)
         if "vista" in style.theme_names():
             style.theme_use("vista")
+        self.day_theme = style.theme_use()
         for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
             tkfont.nametofont(name).configure(family="Segoe UI", size=10)
-        style.configure("Treeview", rowheight=px(24))
-        style.configure("Title.TLabel", font=("Segoe UI Semibold", 15))
-        style.configure("Muted.TLabel", foreground=MUTED_FG)
-        style.configure("Warn.TLabel", foreground=WARN_FG)
-        style.configure("Error.TLabel", foreground=ERROR_FG)
-        style.configure("Primary.TButton", font=("Segoe UI Semibold", 10), padding=(px(12), px(4)))
-        style.configure("TLabelframe.Label", font=("Segoe UI Semibold", 10))
 
         outer = ttk.Frame(root, padding=(px(14), px(10)))
         outer.grid(sticky="nsew")
@@ -184,9 +179,11 @@ class App:
                   style="Muted.TLabel").grid(row=1, column=0, sticky="w")
         self.key_label = ttk.Label(header)
         self.key_label.grid(row=0, column=1, rowspan=2, padx=px(10))
+        self.btn_night = ttk.Button(header, command=self.toggle_night)
+        self.btn_night.grid(row=0, column=2, rowspan=2, padx=(0, px(6)))
         self.btn_details = ttk.Button(header, text="Show details", command=self.toggle_details)
-        self.btn_details.grid(row=0, column=2, rowspan=2, padx=(0, px(6)))
-        ttk.Button(header, text="Settings…", command=self.open_settings).grid(row=0, column=3, rowspan=2)
+        self.btn_details.grid(row=0, column=3, rowspan=2, padx=(0, px(6)))
+        ttk.Button(header, text="Settings…", command=self.open_settings).grid(row=0, column=4, rowspan=2)
 
         # 1 · Add PDFs
         files = ttk.LabelFrame(outer, text="1   Add PDFs", padding=px(8))
@@ -210,10 +207,6 @@ class App:
                                           ("waivers", "Waivers", 70, False), ("message", "Message", 300, True)):
             self.file_tree.heading(col, text=text, anchor="w")
             self.file_tree.column(col, width=px(width), stretch=stretch, anchor="w")
-        self.file_tree.tag_configure("failed", foreground=ERROR_FG)
-        self.file_tree.tag_configure("skipped", foreground=ERROR_FG)
-        self.file_tree.tag_configure("done", foreground=OK_FG)
-        self.file_tree.tag_configure("reading", foreground=ACTIVE_FG)
         self.file_tree.grid(row=1, column=0, sticky="ew")
         scroll = ttk.Scrollbar(files, orient="vertical", command=self.file_tree.yview)
         scroll.grid(row=1, column=1, sticky="ns")
@@ -222,7 +215,7 @@ class App:
         self.file_tree.bind("<Double-1>", lambda e: self.show_file_info())
         empty_text = ("No PDFs yet. Click Choose PDFs or Load from input folder, or drag PDFs here."
                       if self.dnd else "No PDFs yet. Click Choose PDFs or Load from input folder.")
-        self.files_empty = ttk.Label(self.file_tree, style="Muted.TLabel", text=empty_text)
+        self.files_empty = ttk.Label(self.file_tree, style="Placeholder.TLabel", text=empty_text)
         if self.dnd:
             for widget in (files, self.file_tree, self.files_empty):
                 widget.drop_target_register(DND_FILES)
@@ -274,14 +267,13 @@ class App:
         for col, text, width in columns:
             self.review_tree.heading(col, text=text, anchor="w")
             self.review_tree.column(col, width=px(width), minwidth=px(60), anchor="w")
-        self.review_tree.tag_configure("review", background=REVIEW_BG)
         self.review_tree.grid(row=1, column=0, sticky="nsew")
         rscroll = ttk.Scrollbar(review, orient="vertical", command=self.review_tree.yview)
         rscroll.grid(row=1, column=1, sticky="ns")
         self.review_tree.configure(yscrollcommand=rscroll.set)
         self.review_tree.bind("<Double-1>", lambda e: self.edit_selected())
         self.review_tree.bind("<Return>", lambda e: self.edit_selected())
-        self.review_empty = ttk.Label(self.review_tree, style="Muted.TLabel",
+        self.review_empty = ttk.Label(self.review_tree, style="Placeholder.TLabel",
                                       text="Contacts appear here after processing.")
 
         actions = ttk.Frame(review)
@@ -325,6 +317,56 @@ class App:
                                state="disabled", relief="flat")
         self.details.grid(row=0, column=0, sticky="ew")
         self.details_open = False
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        """Day keeps the native Windows look; night uses "clam", the built-in theme that honours colours."""
+        night = self.night.get()
+        c = NIGHT if night else DAY
+        px, style = self.px, ttk.Style(self.root)
+        style.theme_use("clam" if night else self.day_theme)
+        if night:
+            bg, fg, field = c["bg"], c["fg"], c["field"]
+            style.configure(".", background=bg, foreground=fg, fieldbackground=field, troughcolor=field,
+                            bordercolor=c["border"], lightcolor=bg, darkcolor=bg, arrowcolor=fg,
+                            selectbackground=c["select"], selectforeground=fg, insertcolor=fg)
+            style.map(".", background=[("disabled", bg)], foreground=[("disabled", "#777777")])
+            style.configure("TButton", background=c["button"])
+            style.map("TButton", background=[("disabled", bg), ("pressed", c["border"]), ("active", c["hover"])])
+            style.configure("Treeview", background=field, foreground=fg)
+            style.map("Treeview", background=[("selected", c["select"])], foreground=[("selected", fg)])
+            style.configure("Treeview.Heading", background=c["button"])
+            style.map("Treeview.Heading", background=[("active", c["hover"])])
+            for name in ("TCheckbutton", "TRadiobutton"):
+                style.configure(name, indicatorbackground=field, indicatorforeground=fg,
+                                indicatorsize=px(13))
+                style.map(name, background=[("active", bg)], indicatorbackground=[("pressed", bg)])
+            style.configure("TScrollbar", background=c["button"])
+            style.map("TScrollbar", background=[("active", c["hover"])])
+        # Style settings belong to a theme, so the app's own styles are set again after each switch.
+        style.configure("Treeview", rowheight=px(24))
+        style.configure("Title.TLabel", font=("Segoe UI Semibold", 15))
+        style.configure("Muted.TLabel", foreground=c["muted"])
+        style.configure("Placeholder.TLabel", foreground=c["muted"], background=c["field"])
+        style.configure("Warn.TLabel", foreground=c["warn"])
+        style.configure("Error.TLabel", foreground=c["error"])
+        style.configure("Primary.TButton", font=("Segoe UI Semibold", 10), padding=(px(12), px(4)))
+        style.configure("TLabelframe.Label", font=("Segoe UI Semibold", 10))
+        for tag in ("failed", "skipped"):
+            self.file_tree.tag_configure(tag, foreground=c["error"])
+        self.file_tree.tag_configure("done", foreground=c["ok"])
+        self.file_tree.tag_configure("reading", foreground=c["active"])
+        self.review_tree.tag_configure("review", background=REVIEW_BG, foreground="black")
+        self.details.configure(background=c["field"], foreground=c["fg"], insertbackground=c["fg"])
+        self.btn_night.configure(text="Day mode" if night else "Night mode")
+
+    def toggle_night(self) -> None:
+        self.night.set(not self.night.get())
+        self.apply_theme()
+        try:
+            set_key(pipeline.ENV_PATH, "NIGHT_MODE", "1" if self.night.get() else "0", quote_mode="never")
+        except OSError as exc:  # the theme still changes for this session
+            self.note("Could not remember night mode.", f"{type(exc).__name__}: {exc}", logging.WARNING)
 
     # ------------------------------------------------------------------ helpers
 
@@ -835,24 +877,25 @@ class EditDialog(tk.Toplevel):
         line += 1
 
         self.fields = []
+        colors = NIGHT if app.night.get() else DAY
         for value_col, confident_col, _ in FIELD_COLUMNS:
             ttk.Label(frame, text=value_col).grid(row=line, column=0, sticky="nw", padx=(0, px(8)), pady=px(2))
             if value_col == "Notes":
                 widget = tk.Text(frame, height=3, width=56, wrap="word", font=("Segoe UI", 10),
-                                 relief="solid", borderwidth=1)
+                                 relief="solid", borderwidth=1, insertbackground=colors["fg"])
                 widget.insert("1.0", str(row.get(value_col, "")))
                 get = lambda w=widget: w.get("1.0", "end-1c")
             else:
                 var = tk.StringVar(value=str(row.get(value_col, "")))
                 widget = tk.Entry(frame, textvariable=var, width=56, font=("Segoe UI", 10),
-                                  relief="solid", borderwidth=1)
+                                  relief="solid", borderwidth=1, insertbackground=colors["fg"])
                 get = var.get
             widget.grid(row=line, column=1, sticky="ew", pady=px(2))
             flag = tk.BooleanVar(value=not row.get(confident_col, False))
             ttk.Checkbutton(frame, text="Needs review", variable=flag,
-                            command=lambda w=widget, f=flag: self._paint(w, f)
+                            command=lambda w=widget, f=flag: self._paint(w, f, colors)
                             ).grid(row=line, column=2, sticky="nw", padx=(px(8), 0), pady=px(2))
-            self._paint(widget, flag)
+            self._paint(widget, flag, colors)
             self.fields.append((value_col, confident_col, get, flag))
             line += 1
 
@@ -876,8 +919,11 @@ class EditDialog(tk.Toplevel):
         self.wait_window()
 
     @staticmethod
-    def _paint(widget, flag: tk.BooleanVar) -> None:
-        widget.configure(background=REVIEW_BG if flag.get() else "white")
+    def _paint(widget, flag: tk.BooleanVar, colors: dict) -> None:
+        # Yellow boxes keep dark text so they stay readable in night mode.
+        flagged = flag.get()
+        widget.configure(background=REVIEW_BG if flagged else colors["field"],
+                         foreground="black" if flagged else colors["fg"])
 
     def save(self) -> None:
         row = self.row
