@@ -1,6 +1,12 @@
 # TNOCR Gemini Starter
 
-A command-line Python tool that reads scanned visitor waiver PDFs from the Toah Nipi Christian Retreat Center and turns them into one Excel contact list.
+A Python tool that reads scanned visitor waiver PDFs from the Toah Nipi Christian Retreat Center and turns them into an Excel contact list. It has a command-line workflow (`python main.py`) and a Windows desktop app.
+
+> **Non-technical Windows users:** see [QUICKSTART-WINDOWS.md](QUICKSTART-WINDOWS.md). In short:
+>
+> 1. Double-click `Setup.bat` once.
+> 2. Double-click `Open OCR App.bat`.
+> 3. Choose PDFs, click **Process PDFs**, review the contacts, then click **Save spreadsheet**.
 
 The scans are mostly handwritten forms. The tool reads them with OCR, meaning it turns the text in a scanned image into editable text. Here that work is done by Google's Gemini AI model through the Gemini API, not by a local OCR engine. Gemini returns structured fields for each guest. The tool merges repeat visitors cautiously and writes `output/master_contacts.xlsx`. Any field a person should double-check is flagged and highlighted.
 
@@ -144,11 +150,33 @@ Within a merged contact:
 | --- | --- | --- |
 | `input/` | Your source PDFs | Never changed or deleted by the tool |
 | `extracted/<pdf name>.json` | Extracted personal data for each PDF, plus the model name and a prompt hash | Kept until you delete it |
-| `output/master_contacts.xlsx` | The merged contact list | Overwritten on each run |
+| `output/master_contacts.xlsx` | The merged contact list | Overwritten on each CLI run |
+| `output/contacts_<date>_<time>.xlsx` | One file per desktop-app save | Never overwritten; kept until you delete it |
+| `output/backups/` | Previous master lists (desktop app's "Replace master list" mode) | Kept until you delete it |
+| `logs/` | Desktop-app log: file names, statuses and errors. API keys are removed, and no waiver field values are logged | Rotates at about 1 MB |
 | `source_links.json` | Optional URL mapping | Created and maintained by you |
 | `.env` | Your API key and settings | Created and maintained by you |
 
-[.gitignore](.gitignore) excludes `input/`, `extracted/`, `output/`, `source_links.json` and `.env`. They contain private visitor data or secrets, so do not commit them.
+[.gitignore](.gitignore) excludes `input/`, `extracted/`, `output/`, `logs/`, `dist/`, `source_links.json` and `.env`. They contain private visitor data or secrets, so do not commit them.
+
+## Desktop app (Windows)
+
+[gui.py](gui.py) is a Tkinter interface over the same pipeline:
+
+- **Add PDFs:** add files from anywhere with **Choose PDFs**, by drag-and-drop, or with **Load from input folder**.
+- **Process:** reads the PDFs in the background. One failed PDF does not stop the others. A rejected key, a quota limit or no network stops the remaining files, so requests that cannot succeed are not sent.
+- **Review and correct:** shows the merged contacts. "Needs review" means a `*_Confident` flag is `FALSE` or a name is blank. Ticking or unticking **Needs review** for a field sets its `*_Confident` column.
+- **Save:** writes a new `output/contacts_<timestamp>.xlsx` with the same columns and formatting as the master file, plus a **Files** sheet that lists every PDF and whether it failed. Files are created with exclusive-create, so an existing file is never replaced.
+
+The advanced **Replace master list** mode writes `output/master_contacts.xlsx`. It asks for confirmation and copies the old file to `output/backups/` first.
+
+| Launcher | What it does |
+| --- | --- |
+| `Setup.bat` | Finds Python 3.9+ (`py -3`, then `python`) and runs [tools/setup_env.py](tools/setup_env.py). That script creates or repairs `.venv` and installs `requirements.txt`. It records the computer and folder in `.venv/tnocr_setup.json`, so a `.venv` copied from another computer or folder is rebuilt. Safe to re-run. |
+| `Open OCR App.bat` | Checks the setup, imports the app (a crash is shown and saved to `logs/startup-error.log`), then starts it with `pythonw` (no console). |
+| `Prepare Distribution.bat` | Runs [tools/prepare_distribution.py](tools/prepare_distribution.py). It copies an allow-list of app files to `dist/<timestamp>/Waiver Contacts/` and makes a `.zip`. It never copies `.env`, PDFs, spreadsheets, `extracted/`, `logs/` or `.venv`. |
+
+**API key for the desktop app:** on first launch the **Settings** window asks for the key. It writes `GEMINI_API_KEY` into this folder's `.env`, the same file the CLI reads. **Test key** looks up the model's details (`models.get`) and does not process any PDF.
 
 ## Development
 
@@ -161,14 +189,19 @@ Within a merged contact:
 - `openpyxl` to write the workbook.
 - `python-dateutil` to parse dates.
 
-The dependencies in [requirements.txt](requirements.txt) have no exact versions. The code uses `client.interactions`, which is present in `google-genai` 2.20.0.
+- `tkinterdnd2` for drag-and-drop in the desktop app (optional at runtime).
+
+[requirements.txt](requirements.txt) pins the direct dependencies to the tested versions (`google-genai` 2.20.0 and others). An unpinned install currently pulls `google-genai` 3.x and `python-dateutil` 4.x, which this code has not been tested with. Update the pins deliberately, after re-testing.
 
 | File | Role |
 | --- | --- |
-| [main.py](main.py) | Entry point: loads settings, finds PDFs, manages the cache, builds source links and writes the workbook |
-| [extractor.py](extractor.py) | Uploads one PDF, asks Gemini for schema-constrained JSON (up to 3 attempts with backoff), and deletes the upload |
+| [main.py](main.py) | CLI entry point: processes `input/*.pdf` and writes `output/master_contacts.xlsx` |
+| [gui.py](gui.py) | Desktop app (UI only) |
+| [pipeline.py](pipeline.py) | Shared settings, cache, source links and the per-file batch runner |
+| [friendly_errors.py](friendly_errors.py) | Plain-language error messages; removes API keys and waiver values from technical details |
+| [extractor.py](extractor.py) | Checks the file is a PDF, uploads it, asks Gemini for schema-constrained JSON (up to 3 attempts with backoff; key, request and model errors are not retried), and deletes the upload |
 | [models.py](models.py) | Pydantic models (`ExtractedField`, `WaiverRecord`, `PDFExtraction`) used as the Gemini response schema |
-| [spreadsheet.py](spreadsheet.py) | Merges records, chooses fields and writes the formatted Excel file |
+| [spreadsheet.py](spreadsheet.py) | Merges records, chooses fields, writes the formatted Excel file and saves without overwriting |
 | [prompt.md](prompt.md) | Extraction instructions sent to Gemini |
 | [test_gemini.py](test_gemini.py), [test_gemini_simple.py](test_gemini_simple.py) | Manual scripts that test the API connection (not automated tests) |
 
@@ -178,9 +211,17 @@ The dependencies in [requirements.txt](requirements.txt) have no exact versions.
 - Its prompt hash matches the current `prompt.md`.
 - It still validates against the models in `models.py`.
 
-If any of these fail, the PDF is extracted again. Changing `GEMINI_THINKING_LEVEL`, or replacing a PDF with a different file of the same name, does **not** clear the cache. In those cases, delete the matching JSON file.
+If any of these fail, the PDF is extracted again. Changing `GEMINI_THINKING_LEVEL` does **not** clear the cache; delete the matching JSON file in that case.
 
-**Tests:** the project has no automated test suite. Both `test_gemini*.py` scripts make live API calls as soon as Python imports them. Do not run them with pytest. Run them directly with `python`, as shown in [Quick start](#quick-start).
+New cache files also store the PDF's SHA-256 hash, so a different PDF with the same name is extracted again. Cache files written before this change have no hash and are still reused.
+
+**Tests:** automated tests live in `tests/`. They use a fake Gemini client and synthetic PDFs, so they make no API calls:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -t .
+```
+
+The `test_gemini*.py` scripts in the project root are different: they make live API calls as soon as Python imports them. Run them directly with `python`, as shown in [Quick start](#quick-start), and never with pytest or unittest discovery from the root.
 
 There is no build step. Run `python main.py` from the project folder.
 

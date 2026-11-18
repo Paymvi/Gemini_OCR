@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import io
+import os
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from dateutil import parser as date_parser
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
@@ -257,6 +259,15 @@ def build_master_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 prior[i - 1]["source_link"] if i <= len(prior) else ""
             )
 
+        # Underscore keys are for the desktop app's review table; they are not in HEADERS,
+        # so the workbook never contains them.
+        row["_source_file"] = latest["source_file"]
+        row["_source_path"] = latest.get("source_path", "")
+        row["_source_page"] = latest["record"].individual_page
+        row["_other_sources"] = [
+            f"{meta['source_file']} (page {meta['record'].individual_page})" for meta in prior
+        ]
+
         rows.append(row)
 
     rows.sort(
@@ -268,9 +279,46 @@ def build_master_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def write_workbook(records: list[dict[str, Any]], output_path: Path) -> None:
-    rows = build_master_rows(records)
+MERGE_FLAG_COLUMNS = [
+    ("All Prior Visit Dates", "All_Prior_Visit_Dates_Confident"),
+    ("Visit Count", "Visit_Count_Confident"),
+]
+REQUIRED_FIELDS = ["First Name", "Last Name"]
 
+
+def review_reasons(row: dict[str, Any]) -> list[str]:
+    """Why a row needs a human look, using only the existing flags and required fields."""
+    reasons = [
+        f"{value_col} flagged"
+        for value_col, confident_col, _ in FIELD_COLUMNS
+        if not row.get(confident_col, False)
+    ]
+    if any(not row.get(confident_col, False) for _, confident_col in MERGE_FLAG_COLUMNS):
+        reasons.append("Repeat-visit match not confirmed")
+    reasons += [
+        f"{name} is blank" for name in REQUIRED_FIELDS if not str(row.get(name, "")).strip()
+    ]
+    return reasons
+
+
+def write_workbook(records: list[dict[str, Any]], output_path: Path) -> None:
+    write_rows(build_master_rows(records), output_path)
+
+
+def write_rows(
+    rows: list[dict[str, Any]],
+    output_path: Path,
+    files_summary: list[tuple[str, str, int, str]] | None = None,
+) -> None:
+    """Write already-built rows (possibly corrected by a person) to an .xlsx file."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _build_workbook(rows, files_summary).save(output_path)
+
+
+def _build_workbook(
+    rows: list[dict[str, Any]],
+    files_summary: list[tuple[str, str, int, str]] | None = None,
+) -> Workbook:
     wb = Workbook()
     ws = wb.active
     ws.title = "Master Contacts"
@@ -298,10 +346,7 @@ def write_workbook(records: list[dict[str, Any]], output_path: Path) -> None:
                 ws.cell(row=row_number, column=header_index[value_col]).fill = review_fill
                 ws.cell(row=row_number, column=header_index[confident_col]).fill = false_fill
 
-        for value_col, confident_col in [
-            ("All Prior Visit Dates", "All_Prior_Visit_Dates_Confident"),
-            ("Visit Count", "Visit_Count_Confident"),
-        ]:
+        for value_col, confident_col in MERGE_FLAG_COLUMNS:
             if not bool(row_data.get(confident_col, False)):
                 ws.cell(row=row_number, column=header_index[value_col]).fill = review_fill
                 ws.cell(row=row_number, column=header_index[confident_col]).fill = false_fill
@@ -359,5 +404,99 @@ def write_workbook(records: list[dict[str, Any]], output_path: Path) -> None:
         for cell in row:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(output_path)
+    if files_summary is not None:
+        # Second sheet so failed PDFs are recorded in the file, not silently dropped.
+        files_ws = wb.create_sheet("Files")
+        files_ws.append(["File", "Result", "Waivers found", "Message"])
+        for cell in files_ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+        for name, result, waivers, message in files_summary:
+            files_ws.append([name, result, waivers, message])
+            if result != "Done":
+                files_ws.cell(row=files_ws.max_row, column=2).fill = false_fill
+        for letter, width in zip("ABCD", (45, 14, 15, 80)):
+            files_ws.column_dimensions[letter].width = width
+
+    return wb
+
+
+# ---------------------------------------------------------------- saving without overwriting
+
+MASTER_FILENAME = "master_contacts.xlsx"
+RUN_FILE_PREFIX = "contacts"
+
+
+def _workbook_bytes(rows, files_summary) -> bytes:
+    buffer = io.BytesIO()
+    _build_workbook(rows, files_summary).save(buffer)
+    return buffer.getvalue()
+
+
+def _write_new_file(directory: Path, stem: str, data: bytes) -> Path:
+    """Create stem.xlsx, or stem_2.xlsx, stem_3.xlsx ... Never replaces an existing file."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for n in range(1, 1000):
+        candidate = directory / (f"{stem}.xlsx" if n == 1 else f"{stem}_{n}.xlsx")
+        try:
+            handle = candidate.open("xb")  # "x" = fail if the file exists
+        except FileExistsError:
+            continue
+        try:
+            with handle:
+                handle.write(data)
+        except BaseException:
+            candidate.unlink(missing_ok=True)
+            raise
+        return candidate
+    raise FileExistsError(f"Too many files named {stem}*.xlsx in {directory}")
+
+
+def save_rows_as_new(
+    rows: list[dict[str, Any]],
+    output_dir: Path,
+    files_summary: list[tuple[str, str, int, str]] | None = None,
+    now: datetime | None = None,
+) -> Path:
+    """Default export: a new timestamped spreadsheet, e.g. contacts_2026-11-18_14-30-05.xlsx."""
+    stamp = (now or datetime.now()).strftime("%Y-%m-%d_%H-%M-%S")
+    return _write_new_file(output_dir, f"{RUN_FILE_PREFIX}_{stamp}", _workbook_bytes(rows, files_summary))
+
+
+def replace_master(
+    rows: list[dict[str, Any]],
+    master_path: Path,
+    files_summary: list[tuple[str, str, int, str]] | None = None,
+    now: datetime | None = None,
+) -> tuple[Path, Path | None]:
+    """Advanced export: replace master_contacts.xlsx, first copying the old one to backups/."""
+    data = _workbook_bytes(rows, files_summary)
+    master_path.parent.mkdir(parents=True, exist_ok=True)
+    backup = None
+    if master_path.exists():
+        stamp = (now or datetime.now()).strftime("%Y-%m-%d_%H-%M-%S")
+        backup = _write_new_file(
+            master_path.parent / "backups",
+            f"{master_path.stem}_before_{stamp}",
+            master_path.read_bytes(),
+        )
+    temp_path = master_path.with_name(f".{master_path.stem}.saving.tmp")
+    temp_path.write_bytes(data)
+    try:
+        os.replace(temp_path, master_path)  # fails while Excel has the file open
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+    return master_path, backup
+
+
+def count_contact_rows(path: Path) -> int | None:
+    """Number of contact rows in an existing workbook, or None if it cannot be read."""
+    try:
+        wb = load_workbook(path, read_only=True)
+        try:
+            return max(wb.worksheets[0].max_row - 1, 0)
+        finally:
+            wb.close()
+    except Exception:
+        return None
