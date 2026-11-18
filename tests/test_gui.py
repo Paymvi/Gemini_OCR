@@ -22,7 +22,7 @@ class GuiSmokeTests(unittest.TestCase):
             self.skipTest(f"no display: {exc}")
         self.root.withdraw()
         self.tmp = Path(tempfile.mkdtemp(prefix="tnocr gui "))
-        env = mock.patch.dict(os.environ, {"GEMINI_API_KEY": "fake-key"})
+        env = mock.patch.dict(os.environ, {"GEMINI_API_KEY": "fake-key", "NIGHT_MODE": "0", "SIMPLE_VIEW": "0"})
         env.start()
         self.addCleanup(env.stop)
         boxes = mock.patch.multiple(gui.messagebox, askyesno=mock.DEFAULT, showinfo=mock.DEFAULT,
@@ -62,6 +62,29 @@ class GuiSmokeTests(unittest.TestCase):
             self.app.toggle_night()
             self.assertEqual(gui.ttk.Style(self.root).theme_use(), self.app.day_theme)
             self.assertIn("NIGHT_MODE=0", env_file.read_text())
+
+    def test_simple_view_toggles_and_is_remembered(self):
+        env_file = self.tmp / ".env"
+        with mock.patch.object(pipeline, "ENV_PATH", env_file):
+            self.app.toggle_simple()
+            self.assertEqual(gui.ttk.Style(self.root).theme_use(), "clam")
+            self.assertEqual(self.app.btn_simple.cget("text"), "Classic view")
+            self.assertEqual(self.app.review_tree.cget("displaycolumns"), gui.SIMPLE_COLUMNS)
+            self.assertIn("SIMPLE_VIEW=1", env_file.read_text())
+            self.assertEqual(self.app.btn_process.cget("text"), "▶  Process PDFs")
+            self.assertFalse(self.app.save_hint.winfo_manager())  # help sentences hidden...
+            self.assertEqual(self.app.help_labels[0][0].cget("text"), "?")  # ...behind a "?"
+            self.app.output_mode.set("master")
+            self.app.toggle_simple()
+            self.assertEqual(gui.ttk.Style(self.root).theme_use(), self.app.day_theme)
+            self.assertEqual(self.app.review_tree.cget("displaycolumns"), ("#all",))
+            self.assertEqual(self.app.btn_process.cget("text"), "Process PDFs")
+            self.assertEqual(self.app.save_hint.winfo_manager(), "grid")
+            self.assertEqual(self.app.help_labels[0][0].cget("text"), "")
+            self.assertIn("SIMPLE_VIEW=0", env_file.read_text())
+            self.app.output_mode.set("master")
+            self.app.toggle_simple()  # simple view never keeps the advanced "replace master" choice
+            self.assertEqual(self.app.output_mode.get(), "new")
 
     def test_review_edit_and_save_with_a_failed_file(self):
         good = write_pdf(self.tmp / "good.pdf", "1")

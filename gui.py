@@ -52,7 +52,11 @@ DAY = {"fg": "black", "field": "white", "error": "#a4262c", "ok": "#1b6e35", "ac
        "muted": "#5b6470", "warn": "#8a5a00"}
 NIGHT = {"fg": "#e6e6e6", "bg": "#1f1f1f", "field": "#2b2b2b", "button": "#333333", "hover": "#3d3d3d",
          "select": "#2f5a8a", "border": "#454545", "error": "#ff8a8a", "ok": "#7ed69a",
-         "active": "#79b8ff", "muted": "#a0a8b3", "warn": "#e0b45c"}
+         "active": "#79b8ff", "muted": "#a0a8b3", "warn": "#e0b45c", "accent": "#3b82c4"}
+SIMPLE = {"fg": "#1f2933", "bg": "#f4f6f9", "field": "white", "button": "#e6eaf0", "hover": "#d8dee6",
+          "select": "#cfe3fb", "border": "#d3d9e1", "error": "#a4262c", "ok": "#1b6e35",
+          "active": "#0b5cad", "muted": "#5b6470", "warn": "#8a5a00", "accent": "#0b5cad"}
+SIMPLE_COLUMNS = ("status", "First Name", "Last Name", "Email", "Phone Number")
 
 FILE_STATUS = {
     "ready": "Ready",
@@ -114,6 +118,43 @@ def row_status(row: dict) -> str:
     return text + (" · edited" if row.get("_edited") else "")
 
 
+class Tooltip:
+    """Hover help: a small box under the widget, shown only while `active()` is true (simple view)."""
+
+    def __init__(self, widget, text: str, wrap: int, active=lambda: True):
+        self.widget, self.text, self.wrap, self.active = widget, text, wrap, active
+        self.tip = self.job = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        for event in ("<Leave>", "<ButtonPress>", "<Destroy>"):
+            widget.bind(event, self._hide, add="+")
+
+    def _schedule(self, _event=None) -> None:
+        self._hide()
+        if self.active():
+            self.job = self.widget.after(350, self._show)
+
+    def _show(self) -> None:
+        self.job = None
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.attributes("-topmost", True)  # before positioning: on Windows it resets the position
+        tk.Label(self.tip, text=self.text, justify="left", wraplength=self.wrap, background="#2b2f36",
+                 foreground="white", font=("Segoe UI", 10), padx=10, pady=6).pack()
+        self.tip.update_idletasks()
+        top = self.widget.winfo_toplevel()  # keep the box inside the app window (and the screen)
+        right = min(top.winfo_rootx() + top.winfo_width(), self.widget.winfo_screenwidth()) - 8
+        x = min(self.widget.winfo_rootx(), right - self.tip.winfo_reqwidth())
+        self.tip.wm_geometry(f"+{max(x, 0)}+{self.widget.winfo_rooty() + self.widget.winfo_height() + 4}")
+
+    def _hide(self, _event=None) -> None:
+        if self.job:
+            self.widget.after_cancel(self.job)
+            self.job = None
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
+
 class App:
     def __init__(self, root: tk.Tk, output_dir: Path = pipeline.OUTPUT_DIR):
         self.root = root
@@ -131,6 +172,7 @@ class App:
         self.output_mode = tk.StringVar(value="new")
         self.only_review = tk.BooleanVar(value=False)
         self.night = tk.BooleanVar(value=os.getenv("NIGHT_MODE", "") == "1")
+        self.simple = tk.BooleanVar(value=os.getenv("SIMPLE_VIEW", "") == "1")
 
         scale = root.winfo_fpixels("1i") / 96.0
         self.px = lambda n: int(n * scale)
@@ -151,6 +193,8 @@ class App:
     def _build(self) -> None:
         root, px = self.root, self.px
         root.title(APP_TITLE)
+        # Simple view: (widget, classic text, short text), ("?" label, classic text), rows it hides.
+        self.swaps, self.help_labels, self.classic_only = [], [], []
         height = min(px(740), root.winfo_screenheight() - px(80))
         root.geometry(f"{px(1000)}x{height}")
         root.minsize(px(820), min(px(600), height))
@@ -162,7 +206,7 @@ class App:
         for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
             tkfont.nametofont(name).configure(family="Segoe UI", size=10)
 
-        outer = ttk.Frame(root, padding=(px(14), px(10)))
+        outer = self.outer = ttk.Frame(root)
         outer.grid(sticky="nsew")
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
@@ -175,15 +219,24 @@ class App:
         header.grid(row=0, column=0, sticky="ew", **gap)
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text=APP_TITLE, style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="Turn scanned waiver PDFs into a contact spreadsheet.",
-                  style="Muted.TLabel").grid(row=1, column=0, sticky="w")
+        subtitle = ttk.Label(header, text="Turn scanned waiver PDFs into a contact spreadsheet.",
+                             style="Muted.TLabel")
+        subtitle.grid(row=1, column=0, sticky="w")
+        self.classic_only.append(subtitle)
         self.key_label = ttk.Label(header)
         self.key_label.grid(row=0, column=1, rowspan=2, padx=px(10))
+        self.btn_simple = ttk.Button(header, command=self.toggle_simple)
+        self.btn_simple.grid(row=0, column=2, rowspan=2, padx=(0, px(6)))
         self.btn_night = ttk.Button(header, command=self.toggle_night)
-        self.btn_night.grid(row=0, column=2, rowspan=2, padx=(0, px(6)))
+        self.btn_night.grid(row=0, column=3, rowspan=2, padx=(0, px(6)))
         self.btn_details = ttk.Button(header, text="Show details", command=self.toggle_details)
-        self.btn_details.grid(row=0, column=3, rowspan=2, padx=(0, px(6)))
-        ttk.Button(header, text="Settings…", command=self.open_settings).grid(row=0, column=4, rowspan=2)
+        self.btn_details.grid(row=0, column=4, rowspan=2, padx=(0, px(6)))
+        settings = ttk.Button(header, text="Settings…", command=self.open_settings)
+        settings.grid(row=0, column=5, rowspan=2)
+        self._tip(self.btn_simple, "Switch between this simple view and the classic, detailed view.")
+        self._tip(self.btn_night, "Switch between night mode and day mode.")
+        self._tip(self.btn_details, "Show details: technical messages (also saved in logs\\app.log).")
+        self._alt(settings, "⚙", "Settings: the Gemini API key.")
 
         # 1 · Add PDFs
         files = ttk.LabelFrame(outer, text="1   Add PDFs", padding=px(8))
@@ -195,6 +248,12 @@ class App:
         self.btn_input = ttk.Button(bar, text="Load from input folder", command=self.load_input_folder)
         self.btn_remove = ttk.Button(bar, text="Remove selected", command=self.remove_selected)
         self.btn_clear = ttk.Button(bar, text="Clear list", command=self.clear_files)
+        self._alt(files, "①  Add PDFs")
+        self._alt(self.btn_choose, "➕  Choose PDFs…", "Pick waiver PDFs from your computer."
+                  + (" You can also drag PDFs onto the list." if hasattr(root, "TkdndVersion") else ""))
+        self._alt(self.btn_input, "📂  Input folder", f"Load every PDF in the input folder:\n{pipeline.INPUT_DIR}")
+        self._alt(self.btn_remove, "✖", "Remove the selected PDFs from the list. The files are not changed.")
+        self._alt(self.btn_clear, "🗑", "Clear the whole list. The files are not changed.")
         for i, button in enumerate((self.btn_choose, self.btn_input, self.btn_remove, self.btn_clear)):
             button.pack(side="left", padx=(0 if i == 0 else px(6), 0))
         self.dnd = hasattr(root, "TkdndVersion")  # only a TkinterDnD.Tk root has tkdnd loaded
@@ -238,10 +297,15 @@ class App:
         self.busy.grid_remove()
         self.progress_label = ttk.Label(proc, text="Add PDFs, then click Process PDFs.")
         self.progress_label.grid(row=0, column=4, sticky="w", padx=(px(10), 0))
-        ttk.Label(proc, style="Muted.TLabel",
-                  text="PDFs are uploaded to Google Gemini to be read (needs internet; not offline). "
-                       "Files read before are reused at no extra cost."
-                  ).grid(row=1, column=0, columnspan=5, sticky="w", pady=(px(6), 0))
+        privacy = ("PDFs are uploaded to Google Gemini to be read (needs internet; not offline). "
+                   "Files read before are reused at no extra cost.")
+        privacy_label = ttk.Label(proc, style="Muted.TLabel", text=privacy)
+        privacy_label.grid(row=1, column=0, columnspan=5, sticky="w", pady=(px(6), 0))
+        self.classic_only.append(privacy_label)
+        self._help(proc, privacy).grid(row=0, column=5)
+        self._alt(proc, "②  Process")
+        self._alt(self.btn_process, "▶  Process PDFs", "Read the PDFs and pull out the contacts.")
+        self._alt(self.btn_stop, "■  Stop", "Stop after the file being read now is finished.")
         self.failure_label = ttk.Label(proc, style="Error.TLabel", wraplength=px(900), justify="left")
         self.failure_label.grid(row=2, column=0, columnspan=5, sticky="w", pady=(px(4), 0))
         self.failure_label.grid_remove()
@@ -255,8 +319,11 @@ class App:
         top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, px(6)))
         self.summary_label = ttk.Label(top)
         self.summary_label.pack(side="left")
-        ttk.Checkbutton(top, text="Only show contacts that need review", variable=self.only_review,
-                        command=self.refresh_review).pack(side="right")
+        only = ttk.Checkbutton(top, text="Only show contacts that need review", variable=self.only_review,
+                               command=self.refresh_review)
+        only.pack(side="right")
+        self._alt(review, "③  Check contacts")
+        self._alt(only, "Only ⚠", "Only show contacts that need review.")
 
         columns = (("status", "Status", 105), ("First Name", "First name", 100),
                    ("Last Name", "Last name", 100), ("Organization", "Organization", 140),
@@ -283,29 +350,40 @@ class App:
         self.btn_source = ttk.Button(actions, text="Open source PDF", command=self.open_selected_source)
         for i, button in enumerate((self.btn_edit, self.btn_check, self.btn_source)):
             button.pack(side="left", padx=(0 if i == 0 else px(6), 0))
-        ttk.Label(actions, style="Muted.TLabel",
-                  text="Yellow = needs review (Gemini was unsure or a name is blank), "
-                       "not necessarily wrong.").pack(side="right")
+        self._help(actions, "Yellow ⚠ = needs review (Gemini was unsure or a name is blank), not "
+                            "necessarily wrong. Double-click a contact to correct it.",
+                   classic="Yellow = needs review (Gemini was unsure or a name is blank), "
+                           "not necessarily wrong.").pack(side="right")
+        self._alt(self.btn_edit, "✎  Edit", "Correct the selected contact (or double-click it).")
+        self._alt(self.btn_check, "✔  Looks right",
+                  "Mark the selected contacts as checked: you compared them with the PDF.")
+        self._alt(self.btn_source, "📄  View PDF", "Open the PDF the selected contact came from.")
 
         # 4 · Save
         save = ttk.LabelFrame(outer, text="4   Save spreadsheet", padding=px(8))
         save.grid(row=4, column=0, sticky="ew", **gap)
         save.columnconfigure(3, weight=1)
-        ttk.Radiobutton(save, text="New spreadsheet for this run (recommended)", value="new",
-                        variable=self.output_mode, command=self._update_save_hint
-                        ).grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Radiobutton(save, text=f"Replace master list, {MASTER_FILENAME} (advanced)", value="master",
-                        variable=self.output_mode, command=self._update_save_hint
-                        ).grid(row=0, column=2, columnspan=2, sticky="w", padx=(px(16), 0))
+        radio_new = ttk.Radiobutton(save, text="New spreadsheet for this run (recommended)", value="new",
+                                    variable=self.output_mode, command=self._update_save_hint)
+        radio_new.grid(row=0, column=0, columnspan=2, sticky="w")
+        radio_master = ttk.Radiobutton(save, text=f"Replace master list, {MASTER_FILENAME} (advanced)",
+                                       value="master", variable=self.output_mode, command=self._update_save_hint)
+        radio_master.grid(row=0, column=2, columnspan=2, sticky="w", padx=(px(16), 0))
         self.save_hint = ttk.Label(save, style="Muted.TLabel", wraplength=px(900), justify="left")
         self.save_hint.grid(row=1, column=0, columnspan=4, sticky="w", pady=(px(2), px(6)))
+        self.classic_only += [radio_new, radio_master, self.save_hint]
         self.btn_save = ttk.Button(save, text="Save spreadsheet", style="Primary.TButton",
                                    command=self.save_spreadsheet)
         self.btn_save.grid(row=2, column=0, sticky="w")
         self.btn_open = ttk.Button(save, text="Open spreadsheet", command=self.open_spreadsheet)
         self.btn_open.grid(row=2, column=1, padx=(px(6), 0))
-        ttk.Button(save, text="Open output folder", command=self.open_output_folder
-                   ).grid(row=2, column=2, padx=(px(6), 0), sticky="w")
+        btn_folder = ttk.Button(save, text="Open output folder", command=self.open_output_folder)
+        btn_folder.grid(row=2, column=2, padx=(px(6), 0), sticky="w")
+        self._alt(save, "④  Save")
+        self._alt(self.btn_save, "💾  Save spreadsheet", "Save the contacts as a new Excel file in the "
+                  "output folder. Existing spreadsheets are never replaced.")
+        self._alt(self.btn_open, "📊  Open", "Open the spreadsheet you just saved.")
+        self._alt(btn_folder, "📂  Folder", f"Open the output folder:\n{self.output_dir}")
         self.save_status = ttk.Label(save, text="Not saved yet.")
         self.save_status.grid(row=2, column=3, sticky="w", padx=(px(12), 0))
 
@@ -320,19 +398,32 @@ class App:
         self.apply_theme()
 
     def apply_theme(self) -> None:
-        """Day keeps the native Windows look; night uses "clam", the built-in theme that honours colours."""
-        night = self.night.get()
-        c = NIGHT if night else DAY
+        """Classic day keeps the native Windows look. Night and simple view use "clam", the built-in
+        theme that honours colours; simple view also uses bigger text, roomier rows and fewer columns."""
+        night, simple = self.night.get(), self.simple.get()
+        c = self.colors = NIGHT if night else SIMPLE if simple else DAY
         px, style = self.px, ttk.Style(self.root)
-        style.theme_use("clam" if night else self.day_theme)
-        if night:
+        style.theme_use("clam" if night or simple else self.day_theme)
+        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
+            tkfont.nametofont(name).configure(size=11 if simple else 10)
+        self.outer.configure(padding=(px(18), px(10)) if simple else (px(14), px(10)))
+        self.file_tree.configure(height=3 if simple else 4)  # taller rows; leave room for contacts
+        self.review_tree.configure(displaycolumns=SIMPLE_COLUMNS if simple else "#all")
+        if night or simple:
             bg, fg, field = c["bg"], c["fg"], c["field"]
             style.configure(".", background=bg, foreground=fg, fieldbackground=field, troughcolor=field,
                             bordercolor=c["border"], lightcolor=bg, darkcolor=bg, arrowcolor=fg,
                             selectbackground=c["select"], selectforeground=fg, insertcolor=fg)
             style.map(".", background=[("disabled", bg)], foreground=[("disabled", "#777777")])
-            style.configure("TButton", background=c["button"])
+            style.configure("TButton", background=c["button"],
+                            padding=(px(10), px(5)) if simple else 5)  # 5 = clam default
             style.map("TButton", background=[("disabled", bg), ("pressed", c["border"]), ("active", c["hover"])])
+            # Simple view gives the main action buttons a solid accent colour; night alone keeps them grey.
+            primary = (c["accent"], "white") if simple else (c["button"], fg)
+            style.configure("Primary.TButton", background=primary[0], foreground=primary[1])
+            style.map("Primary.TButton", background=[("disabled", bg), ("active", c["active"] if simple
+                                                                          else c["hover"])],
+                      foreground=[("disabled", "#777777"), ("active", primary[1])])
             style.configure("Treeview", background=field, foreground=fg)
             style.map("Treeview", background=[("selected", c["select"])], foreground=[("selected", fg)])
             style.configure("Treeview.Heading", background=c["button"])
@@ -342,31 +433,81 @@ class App:
                                 indicatorsize=px(13))
                 style.map(name, background=[("active", bg)], indicatorbackground=[("pressed", bg)])
             style.configure("TScrollbar", background=c["button"])
+            style.configure("TProgressbar", background=c["accent"])  # clam would draw the bar in bg colour
             style.map("TScrollbar", background=[("active", c["hover"])])
         # Style settings belong to a theme, so the app's own styles are set again after each switch.
-        style.configure("Treeview", rowheight=px(24))
-        style.configure("Title.TLabel", font=("Segoe UI Semibold", 15))
+        style.configure("Treeview", rowheight=px(28 if simple else 24))
+        style.configure("Title.TLabel", font=("Segoe UI Semibold", 17 if simple else 15))
         style.configure("Muted.TLabel", foreground=c["muted"])
         style.configure("Placeholder.TLabel", foreground=c["muted"], background=c["field"])
         style.configure("Warn.TLabel", foreground=c["warn"])
         style.configure("Error.TLabel", foreground=c["error"])
-        style.configure("Primary.TButton", font=("Segoe UI Semibold", 10), padding=(px(12), px(4)))
-        style.configure("TLabelframe.Label", font=("Segoe UI Semibold", 10))
+        style.configure("Primary.TButton", font=("Segoe UI Semibold", 11 if simple else 10),
+                        padding=(px(16), px(7)) if simple else (px(12), px(4)))
+        style.configure("TLabelframe.Label", font=("Segoe UI Semibold", 12 if simple else 10))
+        style.configure("Help.TLabel", foreground=c.get("accent", c["active"]), font=("Segoe UI Semibold", 12),
+                        padding=(px(8), 0))
         for tag in ("failed", "skipped"):
             self.file_tree.tag_configure(tag, foreground=c["error"])
         self.file_tree.tag_configure("done", foreground=c["ok"])
         self.file_tree.tag_configure("reading", foreground=c["active"])
         self.review_tree.tag_configure("review", background=REVIEW_BG, foreground="black")
         self.details.configure(background=c["field"], foreground=c["fg"], insertbackground=c["fg"])
-        self.btn_night.configure(text="Day mode" if night else "Night mode")
+        for widget, classic, short in self.swaps:
+            widget.configure(text=short if simple else classic)
+            if isinstance(widget, ttk.Button):  # icon-only buttons stay small
+                widget.configure(width=4 if simple and len(short) <= 2 else "")
+        for label, classic in self.help_labels:
+            label.configure(text="?" if simple else classic, style="Help.TLabel" if simple else "Muted.TLabel")
+        for widget in self.classic_only:
+            widget.grid_remove() if simple else widget.grid()
+        self.btn_choose.configure(style="Primary.TButton" if simple else "TButton")  # first step stands out
+        if simple:  # the advanced "replace master list" choice is only offered in classic view
+            self.output_mode.set("new")
+            self._update_save_hint()
+        self._label_toggles()
+        self.refresh_key_label()
+        self.refresh_review()
+
+    def _label_toggles(self) -> None:
+        simple, night = self.simple.get(), self.night.get()
+        self.btn_simple.configure(text="Classic view" if simple else "Simple view")
+        if simple:
+            self.btn_night.configure(text="🔆" if night else "🌙", width=4)
+            self.btn_details.configure(text="⋯", width=4)
+        else:
+            self.btn_night.configure(text="Day mode" if night else "Night mode", width="")
+            self.btn_details.configure(text="Hide details" if self.details_open else "Show details", width="")
+
+    def _tip(self, widget, text: str) -> None:
+        Tooltip(widget, text, self.px(360), active=self.simple.get)
+
+    def _alt(self, widget, short: str, tip: str = "") -> None:
+        """Register the shorter text `widget` shows in simple view, plus its hover help."""
+        self.swaps.append((widget, str(widget.cget("text")), short))
+        if tip:
+            self._tip(widget, tip)
+
+    def _help(self, parent, tip: str, classic: str = "") -> ttk.Label:
+        """A "?" that explains on hover in simple view; shows `classic` (often nothing) in classic view."""
+        label = ttk.Label(parent, cursor="question_arrow")
+        self.help_labels.append((label, classic))
+        self._tip(label, tip)
+        return label
 
     def toggle_night(self) -> None:
-        self.night.set(not self.night.get())
+        self._toggle(self.night, "NIGHT_MODE", "night mode")
+
+    def toggle_simple(self) -> None:
+        self._toggle(self.simple, "SIMPLE_VIEW", "the view")
+
+    def _toggle(self, var: tk.BooleanVar, env_key: str, what: str) -> None:
+        var.set(not var.get())
         self.apply_theme()
         try:
-            set_key(pipeline.ENV_PATH, "NIGHT_MODE", "1" if self.night.get() else "0", quote_mode="never")
-        except OSError as exc:  # the theme still changes for this session
-            self.note("Could not remember night mode.", f"{type(exc).__name__}: {exc}", logging.WARNING)
+            set_key(pipeline.ENV_PATH, env_key, "1" if var.get() else "0", quote_mode="never")
+        except OSError as exc:  # the look still changes for this session
+            self.note(f"Could not remember {what}.", f"{type(exc).__name__}: {exc}", logging.WARNING)
 
     # ------------------------------------------------------------------ helpers
 
@@ -383,16 +524,16 @@ class App:
         self.details_open = not self.details_open
         if self.details_open:
             self.details_frame.grid(row=5, column=0, sticky="ew")
-            self.btn_details.configure(text="Hide details")
         else:
             self.details_frame.grid_remove()
-            self.btn_details.configure(text="Show details")
+        self._label_toggles()
 
     def refresh_key_label(self) -> None:
+        simple = self.simple.get()
         if pipeline.get_api_key():
-            self.key_label.configure(text="API key: set", style="Muted.TLabel")
+            self.key_label.configure(text="" if simple else "API key: set", style="Muted.TLabel")
         else:
-            self.key_label.configure(text="API key: not set", style="Error.TLabel")
+            self.key_label.configure(text="⚠ No API key" if simple else "API key: not set", style="Error.TLabel")
 
     def _set_running(self, running: bool) -> None:
         self.running = running
@@ -664,7 +805,9 @@ class App:
             if self.only_review.get() and not status.startswith("Needs review"):
                 continue
             source = f"{row.get('_source_file', '')}, page {row.get('_source_page', '?')}"
-            values = [status] + [row.get(col, "") for col in tree["columns"][1:-1]] + [source]
+            needs = status.startswith("Needs review")
+            shown = status if not self.simple.get() else "⚠ Check" if needs else "✔ " + status
+            values = [shown] + [row.get(col, "") for col in tree["columns"][1:-1]] + [source]
             tree.insert("", "end", iid=str(index), values=values,
                         tags=("review",) if status.startswith("Needs review") else ())
 
@@ -877,7 +1020,7 @@ class EditDialog(tk.Toplevel):
         line += 1
 
         self.fields = []
-        colors = NIGHT if app.night.get() else DAY
+        colors = app.colors
         for value_col, confident_col, _ in FIELD_COLUMNS:
             ttk.Label(frame, text=value_col).grid(row=line, column=0, sticky="nw", padx=(0, px(8)), pady=px(2))
             if value_col == "Notes":
