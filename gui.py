@@ -52,10 +52,10 @@ DAY = {"fg": "black", "field": "white", "error": "#a4262c", "ok": "#1b6e35", "ac
        "muted": "#5b6470", "warn": "#8a5a00"}
 NIGHT = {"fg": "#e6e6e6", "bg": "#1f1f1f", "field": "#2b2b2b", "button": "#333333", "hover": "#3d3d3d",
          "select": "#2f5a8a", "border": "#454545", "error": "#ff8a8a", "ok": "#7ed69a",
-         "active": "#79b8ff", "muted": "#a0a8b3", "warn": "#e0b45c", "accent": "#3b82c4"}
+         "active": "#79b8ff", "muted": "#a0a8b3", "warn": "#e0b45c", "accent": "#3b82c4", "accent_hover": "#2f6aa8"}
 SIMPLE = {"fg": "#1f2933", "bg": "#f4f6f9", "field": "white", "button": "#e6eaf0", "hover": "#d8dee6",
           "select": "#cfe3fb", "border": "#d3d9e1", "error": "#a4262c", "ok": "#1b6e35",
-          "active": "#0b5cad", "muted": "#5b6470", "warn": "#8a5a00", "accent": "#0b5cad"}
+          "active": "#0b5cad", "muted": "#5b6470", "warn": "#8a5a00", "accent": "#0b5cad", "accent_hover": "#094a8c"}
 SIMPLE_COLUMNS = ("status", "First Name", "Last Name", "Email", "Phone Number")
 
 FILE_STATUS = {
@@ -116,6 +116,43 @@ def row_status(row: dict) -> str:
     else:
         text = "OK"
     return text + (" · edited" if row.get("_edited") else "")
+
+
+def rounded_image(radius: int, fill: str, outline: str, bg: str) -> tk.PhotoImage:
+    """A rounded rectangle for ttk image elements (sliced, so it stretches to any size).
+    Tk 8.6 images have no partial transparency, so the soft edge is blended onto `bg` here.
+    Tk fills the middle by repeating the centre, so the centre is kept large: a 1-pixel centre
+    meant hundreds of thousands of tiny copies per redraw and froze the window."""
+    corner, samples = radius + 1, 4
+    size = 2 * corner + 48
+    rgb = [tuple(int(col[i:i + 2], 16) for i in (1, 3, 5)) for col in (bg, outline, fill)]
+
+    def inside(x, y, inset):
+        lo, hi, rad = inset, size - inset, radius - inset
+        cx, cy = min(max(x, lo + rad), hi - rad), min(max(y, lo + rad), hi - rad)
+        return (x - cx) ** 2 + (y - cy) ** 2 <= rad * rad
+
+    rows = []
+    for py in range(size):
+        row = []
+        for px_ in range(size):
+            if corner <= px_ < size - corner or corner <= py < size - corner:  # straight part: no blending
+                edge = px_ in (0, size - 1) or py in (0, size - 1)
+                row.append(outline if edge else fill)
+                continue
+            outer = inner = 0
+            for sy in range(samples):
+                for sx in range(samples):
+                    x, y = px_ + (sx + 0.5) / samples, py + (sy + 0.5) / samples
+                    outer += inside(x, y, 0)
+                    inner += inside(x, y, 1)
+            a_out, a_in = outer / samples ** 2, inner / samples ** 2
+            mix = [b * (1 - a_out) + o * (a_out - a_in) + f * a_in for b, o, f in zip(*rgb)]
+            row.append("#%02x%02x%02x" % tuple(round(v) for v in mix))
+        rows.append("{" + " ".join(row) + "}")
+    image = tk.PhotoImage(width=size, height=size)
+    image.put(" ".join(rows))
+    return image
 
 
 class Tooltip:
@@ -213,6 +250,7 @@ class App:
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(3, weight=1, minsize=px(170))
         gap = {"pady": (0, px(8))}
+        self._round_cache: dict = {}  # rounded-corner images and the ttk elements built from them
 
         # Header
         header = ttk.Frame(outer)
@@ -334,6 +372,7 @@ class App:
         for col, text, width in columns:
             self.review_tree.heading(col, text=text, anchor="w")
             self.review_tree.column(col, width=px(width), minwidth=px(60), anchor="w")
+        self.review_widths = {col: px(width) for col, _, width in columns}
         self.review_tree.grid(row=1, column=0, sticky="nsew")
         rscroll = ttk.Scrollbar(review, orient="vertical", command=self.review_tree.yview)
         rscroll.grid(row=1, column=1, sticky="ns")
@@ -378,6 +417,10 @@ class App:
         self.btn_open = ttk.Button(save, text="Open spreadsheet", command=self.open_spreadsheet)
         self.btn_open.grid(row=2, column=1, padx=(px(6), 0))
         btn_folder = ttk.Button(save, text="Open output folder", command=self.open_output_folder)
+        self.sections = [header, files, proc, review, save]
+        # Buttons with a gap on their left: spacing grows in simple view.
+        self.spaced = [self.btn_input, self.btn_remove, self.btn_clear, self.btn_check, self.btn_source,
+                       self.btn_open, btn_folder]
         btn_folder.grid(row=2, column=2, padx=(px(6), 0), sticky="w")
         self._alt(save, "④  Save")
         self._alt(self.btn_save, "💾  Save spreadsheet", "Save the contacts as a new Excel file in the "
@@ -404,11 +447,18 @@ class App:
         c = self.colors = NIGHT if night else SIMPLE if simple else DAY
         px, style = self.px, ttk.Style(self.root)
         style.theme_use("clam" if night or simple else self.day_theme)
-        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
-            tkfont.nametofont(name).configure(size=11 if simple else 10)
-        self.outer.configure(padding=(px(18), px(10)) if simple else (px(14), px(10)))
-        self.file_tree.configure(height=3 if simple else 4)  # taller rows; leave room for contacts
+        self.outer.configure(padding=(px(26), px(12)) if simple else (px(14), px(10)))
+        for section in self.sections:
+            section.grid_configure(pady=(0, px(10) if simple else px(8)))
+            if isinstance(section, ttk.LabelFrame):
+                section.configure(padding=(px(14), px(10)) if simple else px(8))
+        space = px(10) if simple else px(6)
+        for button in self.spaced:
+            (button.pack_configure if button.winfo_manager() == "pack" else button.grid_configure)(padx=(space, 0))
+        self.btn_stop.grid_configure(padx=(space, px(16) if simple else px(12)))
+        self.file_tree.configure(height=3 if simple else 4)
         self.review_tree.configure(displaycolumns=SIMPLE_COLUMNS if simple else "#all")
+        self.root.after_idle(self._fit_review_columns)
         if night or simple:
             bg, fg, field = c["bg"], c["fg"], c["field"]
             style.configure(".", background=bg, foreground=fg, fieldbackground=field, troughcolor=field,
@@ -416,12 +466,12 @@ class App:
                             selectbackground=c["select"], selectforeground=fg, insertcolor=fg)
             style.map(".", background=[("disabled", bg)], foreground=[("disabled", "#777777")])
             style.configure("TButton", background=c["button"],
-                            padding=(px(10), px(5)) if simple else 5)  # 5 = clam default
+                            padding=(px(14), px(6)) if simple else 5)  # 5 = clam default
             style.map("TButton", background=[("disabled", bg), ("pressed", c["border"]), ("active", c["hover"])])
             # Simple view gives the main action buttons a solid accent colour; night alone keeps them grey.
             primary = (c["accent"], "white") if simple else (c["button"], fg)
             style.configure("Primary.TButton", background=primary[0], foreground=primary[1])
-            style.map("Primary.TButton", background=[("disabled", bg), ("active", c["active"] if simple
+            style.map("Primary.TButton", background=[("disabled", bg), ("active", c["accent_hover"] if simple
                                                                           else c["hover"])],
                       foreground=[("disabled", "#777777"), ("active", primary[1])])
             style.configure("Treeview", background=field, foreground=fg)
@@ -436,16 +486,18 @@ class App:
             style.configure("TProgressbar", background=c["accent"])  # clam would draw the bar in bg colour
             style.map("TScrollbar", background=[("active", c["hover"])])
         # Style settings belong to a theme, so the app's own styles are set again after each switch.
-        style.configure("Treeview", rowheight=px(28 if simple else 24))
-        style.configure("Title.TLabel", font=("Segoe UI Semibold", 17 if simple else 15))
+        style.configure("Treeview", rowheight=px(27 if simple else 24))
+        style.configure("Title.TLabel", font=("Segoe UI Semibold", 16 if simple else 15))
         style.configure("Muted.TLabel", foreground=c["muted"])
         style.configure("Placeholder.TLabel", foreground=c["muted"], background=c["field"])
         style.configure("Warn.TLabel", foreground=c["warn"])
         style.configure("Error.TLabel", foreground=c["error"])
-        style.configure("Primary.TButton", font=("Segoe UI Semibold", 11 if simple else 10),
-                        padding=(px(16), px(7)) if simple else (px(12), px(4)))
-        style.configure("TLabelframe.Label", font=("Segoe UI Semibold", 12 if simple else 10))
-        style.configure("Help.TLabel", foreground=c.get("accent", c["active"]), font=("Segoe UI Semibold", 12),
+        style.configure("Primary.TButton", font=("Segoe UI Semibold", 10),
+                        padding=(px(18), px(7)) if simple else (px(12), px(4)))
+        if night or simple:
+            self._round_corners(style, c, simple)
+        style.configure("TLabelframe.Label", font=("Segoe UI Semibold", 11 if simple else 10))
+        style.configure("Help.TLabel", foreground=c.get("accent", c["active"]), font=("Segoe UI Semibold", 11),
                         padding=(px(8), 0))
         for tag in ("failed", "skipped"):
             self.file_tree.tag_configure(tag, foreground=c["error"])
@@ -468,6 +520,64 @@ class App:
         self._label_toggles()
         self.refresh_key_label()
         self.refresh_review()
+
+    def _round_corners(self, style: ttk.Style, c: dict, simple: bool) -> None:
+        """Simple view draws buttons and section boxes with rounded corners (images, since ttk has no
+        corner radius). Classic night keeps clam's square look, so its layouts are put back."""
+        cache = self._round_cache
+        if "layouts" not in cache:  # clam's own layouts, saved before the first change
+            cache["layouts"] = {name: style.layout(name) for name in ("TButton", "TLabelframe")}
+        layouts = cache["layouts"]
+        if not simple:
+            style.layout("TButton", layouts["TButton"])
+            style.layout("Primary.TButton", layouts["TButton"])
+            style.layout("TLabelframe", layouts["TLabelframe"])
+            style.configure("TLabelframe", labelmargins=(0, 0, 0, 4))  # clam default
+            return
+
+        radius, bg = self.px(6), c["bg"]
+
+        def element(fill, outline, states=()):
+            """Create (once per colour set) an image element with one image per ttk state."""
+            name = "Round%d.%s" % (len(cache), "border")
+            key = (fill, outline, states, bg)
+            if key not in cache:
+                images = [rounded_image(radius, fill, outline, bg)]
+                specs = []
+                for state, (state_fill, state_outline) in states:
+                    images.append(rounded_image(radius, state_fill, state_outline, bg))
+                    specs.append((state, images[-1]))
+                style.element_create(name, "image", images[0], *specs, border=radius + 1, padding=self.px(2),  # radius + 1 = rounded_image corner
+                                     sticky="nsew")  # padding: else the corners pad the label too
+                cache[key] = (name, images)  # keep the images referenced, or Tk drops them
+            return cache[key][0]
+
+        def button_layout(border):
+            return [(border, {"sticky": "nsew", "children": [("Button.focus", {"sticky": "nsew", "children": [
+                ("Button.padding", {"sticky": "nsew", "children": [("Button.label", {"sticky": "nsew"})]})]})]})]
+
+        disabled = ("disabled", (bg, c["border"]))
+        plain = element(c["button"], c["border"], (disabled, ("pressed", (c["border"], c["border"])),
+                                                   ("active", (c["hover"], c["border"]))))
+        primary = element(c["accent"], c["accent"], (disabled, ("active", (c["accent_hover"], c["accent_hover"]))))
+        box = element(bg, c["border"])
+        style.layout("TButton", button_layout(plain))
+        style.layout("Primary.TButton", button_layout(primary))
+        style.layout("TLabelframe", [(box, {"sticky": "nsew"})])
+        style.configure("TLabelframe", labelmargins=(0, 0, 0, self.px(6)))
+
+    def _fit_review_columns(self) -> None:
+        """Simple view shows fewer columns, so they share the table's full width (email gets most)."""
+        tree = self.review_tree
+        if not self.simple.get():
+            for col, width in self.review_widths.items():
+                tree.column(col, width=width)
+            return
+        weights = dict(zip(SIMPLE_COLUMNS, (2, 2, 2, 4, 2)))
+        width = tree.winfo_width() - self.px(4)
+        if width > self.px(200):  # not laid out yet: keep the defaults
+            for col, weight in weights.items():
+                tree.column(col, width=width * weight // sum(weights.values()))
 
     def _label_toggles(self) -> None:
         simple, night = self.simple.get(), self.night.get()

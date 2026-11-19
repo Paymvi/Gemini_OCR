@@ -301,20 +301,6 @@ def review_reasons(row: dict[str, Any]) -> list[str]:
     return reasons
 
 
-def write_workbook(records: list[dict[str, Any]], output_path: Path) -> None:
-    write_rows(build_master_rows(records), output_path)
-
-
-def write_rows(
-    rows: list[dict[str, Any]],
-    output_path: Path,
-    files_summary: list[tuple[str, str, int, str]] | None = None,
-) -> None:
-    """Write already-built rows (possibly corrected by a person) to an .xlsx file."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    _build_workbook(rows, files_summary).save(output_path)
-
-
 def _build_workbook(
     rows: list[dict[str, Any]],
     files_summary: list[tuple[str, str, int, str]] | None = None,
@@ -339,6 +325,9 @@ def _build_workbook(
     for row_data in rows:
         ws.append([row_data.get(header, "") for header in HEADERS])
         row_number = ws.max_row
+        for cell in ws[row_number]:
+            if cell.data_type == "f":  # openpyxl turns text starting with "=" into a formula
+                cell.data_type = "s"
 
         for value_col, confident_col, _ in FIELD_COLUMNS:
             confident = bool(row_data.get(confident_col, False))
@@ -358,9 +347,11 @@ def _build_workbook(
                 cell.style = "Hyperlink"
 
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = ws.dimensions
 
-    if ws.max_row >= 2:
+    # A table has its own filter buttons; a sheet filter over the same cells makes Excel repair the file.
+    if ws.max_row < 2:
+        ws.auto_filter.ref = ws.dimensions
+    else:
         table = Table(displayName="MasterContactsTable", ref=ws.dimensions)
         table.tableStyleInfo = TableStyleInfo(
             name="TableStyleMedium2",

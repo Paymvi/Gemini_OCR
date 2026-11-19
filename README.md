@@ -59,10 +59,10 @@ Never commit `.env`. It is already listed in [.gitignore](.gitignore).
 **3. Check that the key works (optional)**
 
 ```powershell
-python test_gemini.py
+python check_gemini.py
 ```
 
-A working key prints a few numbered progress lines followed by `API WORKS`. This script always uses the `gemini-3.5-flash-lite` model, so it checks your key and connection, not the model set in `GEMINI_MODEL`.
+A working key prints `Calling <model>...` followed by `API WORKS`. The script uses the model and thinking level from your `.env`, so it checks the same settings the app uses. If the request fails, it prints `GEMINI REQUEST FAILED:` and exits with code 1.
 
 **4. Process PDFs**
 
@@ -81,7 +81,7 @@ python main.py
    }
    ```
 
-3. Run `python main.py`. Each PDF prints either `Extracting: <file>` or `Using cached JSON: <file>`. When the run finishes, it prints how many PDFs it processed, how many records it extracted, and where it saved the spreadsheet.
+3. Run `python main.py`. Each PDF prints either `Extracting: <file>` or `Using cached JSON: <file>`. A PDF that cannot be read prints `FAILED: <file>: <reason>` and is skipped; the other PDFs are still processed. When the run finishes, it prints how many PDFs it read, how many records it extracted, and where it saved the spreadsheet. The exit code is 1 if any PDF was not read.
 4. Open `output/master_contacts.xlsx` and check the highlighted cells.
 
 ### Settings
@@ -113,7 +113,7 @@ Each link is one of two things:
 
 Local links use absolute paths, so they break if the project folder moves or the workbook is opened on another computer.
 
-Each run rebuilds the workbook from all PDFs currently in `input/` and overwrites the previous file.
+Each run rebuilds the workbook from all PDFs currently in `input/` and replaces the previous file. The previous file is first copied to `output/backups/`, so corrections saved there from the desktop app are not lost. If no PDF could be read, the existing file is left unchanged.
 
 ### How records are merged
 
@@ -149,10 +149,10 @@ Within a merged contact:
 | Location | Contents | Retention |
 | --- | --- | --- |
 | `input/` | Your source PDFs | Never changed or deleted by the tool |
-| `extracted/<pdf name>.json` | Extracted personal data for each PDF, plus the model name and a prompt hash | Kept until you delete it |
-| `output/master_contacts.xlsx` | The merged contact list | Overwritten on each CLI run |
+| `extracted/<pdf name>-<hash>.json` | Extracted personal data for each PDF, plus the model name and a prompt hash | Kept until you delete it |
+| `output/master_contacts.xlsx` | The merged contact list | Replaced on each CLI run (old copy kept in `output/backups/`) |
 | `output/contacts_<date>_<time>.xlsx` | One file per desktop-app save | Never overwritten; kept until you delete it |
-| `output/backups/` | Previous master lists (desktop app's "Replace master list" mode) | Kept until you delete it |
+| `output/backups/` | Previous master lists (CLI runs and the desktop app's "Replace master list" mode) | Kept until you delete it |
 | `logs/` | Desktop-app log: file names, statuses and errors. API keys are removed, and no waiver field values are logged | Rotates at about 1 MB |
 | `source_links.json` | Optional URL mapping | Created and maintained by you |
 | `.env` | Your API key and settings | Created and maintained by you |
@@ -203,7 +203,7 @@ The advanced **Replace master list** mode writes `output/master_contacts.xlsx`. 
 | [models.py](models.py) | Pydantic models (`ExtractedField`, `WaiverRecord`, `PDFExtraction`) used as the Gemini response schema |
 | [spreadsheet.py](spreadsheet.py) | Merges records, chooses fields, writes the formatted Excel file and saves without overwriting |
 | [prompt.md](prompt.md) | Extraction instructions sent to Gemini |
-| [test_gemini.py](test_gemini.py), [test_gemini_simple.py](test_gemini_simple.py) | Manual scripts that test the API connection (not automated tests) |
+| [check_gemini.py](check_gemini.py) | Manual script that tests the API key and model with one live request (not an automated test) |
 
 **Cache behavior:** a cache entry in `extracted/` is reused only when three things are true:
 
@@ -213,7 +213,7 @@ The advanced **Replace master list** mode writes `output/master_contacts.xlsx`. 
 
 If any of these fail, the PDF is extracted again. Changing `GEMINI_THINKING_LEVEL` does **not** clear the cache; delete the matching JSON file in that case.
 
-New cache files also store the PDF's SHA-256 hash, so a different PDF with the same name is extracted again. Cache files written before this change have no hash and are still reused.
+Cache files are named after the PDF plus the start of its SHA-256 hash, so two different PDFs with the same name (for example `scan.pdf` from two folders) each keep their own result. Older cache files named just `<pdf name>.json` are still reused when they match.
 
 **Tests:** automated tests live in `tests/`. They use a fake Gemini client and synthetic PDFs, so they make no API calls:
 
@@ -221,7 +221,7 @@ New cache files also store the PDF's SHA-256 hash, so a different PDF with the s
 .\.venv\Scripts\python.exe -m unittest discover -s tests -t .
 ```
 
-The `test_gemini*.py` scripts in the project root are different: they make live API calls as soon as Python imports them. Run them directly with `python`, as shown in [Quick start](#quick-start), and never with pytest or unittest discovery from the root.
+`check_gemini.py` in the project root is different: it makes a live API call as soon as Python imports it. Run it directly with `python`, as shown in [Quick start](#quick-start). Its name does not start with `test_`, so test discovery does not pick it up.
 
 There is no build step. Run `python main.py` from the project folder.
 
@@ -230,8 +230,7 @@ There is no build step. Run `python main.py` from the project folder.
 - **The API key is missing:** `main.py` stops with `GEMINI_API_KEY is missing. Put it in your .env file before running this program.` Create `.env` from `.env.example`.
 - **"No PDFs found in …":** PDFs must be directly inside `input/`. Subfolders are not searched.
 - **PDFs over 50 MB** are rejected before upload. Split or compress them first.
-- **An API error stops the run:** if a PDF still fails after 3 attempts, the whole run stops and no workbook is written. PDFs that finished before the failure keep their cache entries, so the next run picks up where this one stopped.
-- **The connection test script does not report failure through its exit code:** `test_gemini.py` prints `GEMINI REQUEST FAILED:` and the error, but it still exits normally.
+- **A PDF that fails is skipped:** if a PDF still fails after 3 attempts, it is reported and the other PDFs are still saved. A rejected key, a quota limit or no network stops the remaining PDFs from being sent, because they would fail the same way. PDFs that finished keep their cache entries, so the next run does not pay for them again.
 - **Visit dates without a year** (for example `Nov 24`) are kept exactly as written, but they cannot be sorted. A merged contact uses its latest visit with a readable date as the main row.
 - **Merging is deliberately strict:**
   - A guest with no email, phone, address or full city/state/ZIP on any waiver is never merged.

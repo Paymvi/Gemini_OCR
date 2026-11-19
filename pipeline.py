@@ -133,11 +133,13 @@ def extract_or_load(
     on_extract: Callable[[Path], None] | None = None,
 ) -> tuple[PDFExtraction, bool]:
     """Return (extraction, came_from_cache). Calls Gemini only on a cache miss."""
-    cache_path = cache_dir / f"{pdf_path.stem}.json"
     sha = file_sha256(pdf_path)
-    extraction = cached_extraction(cache_path, model, prompt_hash, sha)
-    if extraction is not None:
-        return extraction, True
+    # The hash in the name keeps same-named PDFs from different folders from overwriting each other.
+    cache_path = cache_dir / f"{pdf_path.stem}-{sha[:12]}.json"
+    for candidate in (cache_path, cache_dir / f"{pdf_path.stem}.json"):  # second: older cache name
+        extraction = cached_extraction(candidate, model, prompt_hash, sha)
+        if extraction is not None:
+            return extraction, True
 
     if on_extract:
         on_extract(pdf_path)
@@ -201,6 +203,8 @@ def run_batch(
     stop_event: threading.Event | None = None,
     cache_dir: Path = EXTRACTED_DIR,
     client: genai.Client | None = None,
+    source_links: dict[str, str] | None = None,
+    on_extract: Callable[[Path], None] | None = None,
 ) -> BatchResult:
     """Process each PDF in turn. One failed file does not stop the others.
 
@@ -213,7 +217,7 @@ def run_batch(
     from friendly_errors import describe_error
 
     prompt_text, prompt_hash = load_prompt()
-    source_links = load_source_links()
+    source_links = load_source_links() if source_links is None else source_links
     client = client or make_client(api_key)
     model, thinking = get_model(), get_thinking_level()
 
@@ -229,7 +233,7 @@ def run_batch(
         on_event("start", index)
         try:
             extraction, item.from_cache = extract_or_load(
-                client, item.path, prompt_text, prompt_hash, model, thinking, cache_dir
+                client, item.path, prompt_text, prompt_hash, model, thinking, cache_dir, on_extract
             )
             metas = records_for(item.path, extraction, source_links)
         except Exception as exc:

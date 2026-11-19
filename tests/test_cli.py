@@ -53,6 +53,35 @@ class CommandLineTests(unittest.TestCase):
         self.assertIn("Using cached JSON: Fall retreat.pdf", second)
         self.assertEqual(len(client.uploads), 1)
 
+    def test_bad_pdf_is_skipped_and_old_master_is_backed_up(self):
+        write_pdf(self.tmp / "input" / "good.pdf")
+        (self.tmp / "input" / "broken.pdf").write_bytes(b"not a pdf")
+        master = self.tmp / "output" / "master_contacts.xlsx"
+        master.parent.mkdir(parents=True)
+        master.write_bytes(b"corrected by a person")
+        client = FakeClient({"good.pdf": extraction_json(record_dict("Ada", "Lovelace"))})
+
+        out = io.StringIO()
+        with mock.patch.object(main, "make_client", return_value=client), contextlib.redirect_stdout(out):
+            code = main.main()
+        out = out.getvalue()
+
+        self.assertEqual(code, 1)
+        self.assertIn("FAILED: broken.pdf", out)
+        self.assertIn("Processed PDFs: 1 of 2", out)
+        self.assertEqual(load_workbook(master).worksheets[0].max_row, 2)  # good.pdf's contact was saved
+        backups = list((master.parent / "backups").glob("*.xlsx"))
+        self.assertEqual([b.read_bytes() for b in backups], [b"corrected by a person"])
+
+    def test_nothing_read_leaves_master_alone(self):
+        (self.tmp / "input").mkdir()
+        (self.tmp / "input" / "broken.pdf").write_bytes(b"not a pdf")
+        master = self.tmp / "output" / "master_contacts.xlsx"
+        master.parent.mkdir(parents=True)
+        master.write_bytes(b"keep me")
+        self.assertIn("spreadsheet was not changed", self.run_main(FakeClient({})))
+        self.assertEqual(master.read_bytes(), b"keep me")
+
     def test_no_pdfs_message(self):
         out = self.run_main(FakeClient({}))
         self.assertIn("No PDFs found in", out)

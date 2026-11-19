@@ -46,6 +46,9 @@ class PipelineTests(unittest.TestCase):
         _, cached = self.extract(client, other)
         self.assertFalse(cached)
         self.assertEqual(len(client.uploads), 2)
+        # Both results are kept, so a second run pays for neither.
+        self.assertEqual([self.extract(client, p)[1] for p in (pdf, other)], [True, True])
+        self.assertEqual(len(client.uploads), 2)
 
     def test_old_cache_without_hash_is_still_used(self):
         pdf = write_pdf(self.tmp / "old.pdf")
