@@ -91,7 +91,7 @@ You set these in `.env`:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | *(required)* | Your Gemini API key. `main.py` stops with an error if it is missing. |
-| `GEMINI_MODEL` | `gemini-3.7-flash` | The Gemini model used to extract data. |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | The Gemini model used to extract data. |
 | `GEMINI_THINKING_LEVEL` | `low` | The thinking level setting sent to Gemini with each request. |
 
 Extraction rules live in [prompt.md](prompt.md): which fields to extract, how to handle cover pages, the Notes format and when to flag a field. The response structure is defined in [models.py](models.py). You can edit the prompt to change how Gemini reads the forms.
@@ -234,7 +234,7 @@ There is no build step. Run `python main.py` from the project folder.
 - **Visit dates without a year** (for example `Nov 24`) are kept exactly as written, but they cannot be sorted. A merged contact uses its latest visit with a readable date as the main row.
 - **Merging is deliberately strict:**
   - A guest with no email, phone, address or full city/state/ZIP on any waiver is never merged.
-  - Name normalization keeps only the characters a–z and 0–9. As a result, accented letters are dropped: `José` and `Jose` do not match.
+  - Name normalization removes accents, then keeps only the characters a–z and 0–9. `José` and `Jose` match, but letters with no plain-letter form (such as `ø`) are dropped.
   - Names written only in non-Latin scripts (CJK, Hangul, and others) are never merged, even if every other detail matches.
 - **More than 11 prior visits:** only 11 prior-visit link columns exist. Extra prior visits still count toward **Visit Count** and **All Prior Visit Dates**, but get no link.
 - **Extraction quality depends on the model and the scan:** handwriting is hard to read, and the results come from an AI model. Check every highlighted cell. Also spot-check unflagged values against the linked PDF page before you rely on them.

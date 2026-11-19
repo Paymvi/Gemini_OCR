@@ -38,6 +38,16 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(client.deletes, 1)
 
+    def test_token_usage_is_saved_with_the_cache(self):
+        pdf = write_pdf(self.tmp / "x.pdf")
+        # First reply is invalid JSON and is retried; both replies are billed, so both count.
+        client = FakeClient({"x.pdf": ["not json", extraction_json(record_dict())]})
+        self.extract(client, pdf)
+        (cache_file,) = self.cache.glob("x-*.json")
+        usage = pipeline.json.loads(cache_file.read_text(encoding="utf-8"))["usage"]
+        self.assertEqual(usage, {"total_input_tokens": 2000, "total_output_tokens": 400,
+                                 "total_thought_tokens": 100})
+
     def test_different_pdf_with_same_name_is_extracted_again(self):
         pdf = write_pdf(self.tmp / "a" / "scan.pdf", "first")
         client = FakeClient({"scan.pdf": extraction_json(record_dict())})

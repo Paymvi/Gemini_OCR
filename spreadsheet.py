@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -75,7 +76,8 @@ CONTACT_BACKFILL_FIELDS = {
 
 
 def _norm_text(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+    # NFKD splits "é" into "e" + accent mark, so the regex keeps the "e": José matches Jose.
+    return re.sub(r"[^a-z0-9]+", "", unicodedata.normalize("NFKD", value.casefold()))
 
 
 def _norm_email(value: str) -> str:

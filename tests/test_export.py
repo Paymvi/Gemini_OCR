@@ -153,6 +153,13 @@ class RepeatVisitMergeTests(unittest.TestCase):
         self.assertEqual(merged["Prior_Visit_1_Link"], "file:///x#0")
         self.assertTrue(merged["Visit_Count_Confident"])
 
+    def test_accented_name_merges_with_plain_spelling(self):
+        rows = build_master_rows(metas(
+            record_dict("José", "Muñoz", visit_date="01/11/2019"),
+            record_dict("Jose", "Munoz", visit_date="03/02/2021", page=2),
+        ))
+        self.assertEqual([r["Visit Count"] for r in rows], [2])
+
 
 if __name__ == "__main__":
     unittest.main()

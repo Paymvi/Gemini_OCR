@@ -70,4 +70,5 @@ class FakeClient:
         answer = queue.pop(0) if len(queue) > 1 else queue[0]
         if isinstance(answer, BaseException):
             raise answer
-        return SimpleNamespace(output_text=answer)
+        return SimpleNamespace(output_text=answer, usage=SimpleNamespace(
+            total_input_tokens=1000, total_output_tokens=200, total_thought_tokens=50, total_cached_tokens=None))

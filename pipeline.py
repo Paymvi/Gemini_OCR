@@ -26,7 +26,7 @@ PROMPT_PATH = ROOT / "prompt.md"
 SOURCE_LINKS_PATH = ROOT / "source_links.json"
 ENV_PATH = ROOT / ".env"
 
-DEFAULT_MODEL = "gemini-3.7-flash"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_THINKING_LEVEL = "low"
 PLACEHOLDER_KEY = "PASTE_YOUR_KEY_HERE"
 
@@ -106,6 +106,7 @@ def save_cache(
     prompt_hash: str,
     extraction: PDFExtraction,
     pdf_sha256: str | None = None,
+    usage: dict[str, int] | None = None,
 ) -> None:
     payload = {
         "source_pdf": pdf_name,
@@ -115,6 +116,8 @@ def save_cache(
     }
     if pdf_sha256:
         payload["pdf_sha256"] = pdf_sha256
+    if usage:
+        payload["usage"] = usage
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False),
@@ -143,14 +146,14 @@ def extract_or_load(
 
     if on_extract:
         on_extract(pdf_path)
-    extraction = extract_pdf(
+    extraction, usage = extract_pdf(
         client=client,
         pdf_path=pdf_path,
         prompt_text=prompt_text,
         model=model,
         thinking_level=thinking_level,
     )
-    save_cache(cache_path, pdf_path.name, model, prompt_hash, extraction, sha)
+    save_cache(cache_path, pdf_path.name, model, prompt_hash, extraction, sha, usage)
     return extraction, False
 
 

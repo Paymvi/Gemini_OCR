@@ -38,13 +38,24 @@ def _is_permanent(exc: Exception) -> bool:
     return isinstance(exc, genai_errors.ClientError) and exc.code in PERMANENT_ERROR_CODES
 
 
+USAGE_FIELDS = ("total_input_tokens", "total_output_tokens", "total_thought_tokens", "total_cached_tokens")
+
+
+def _add_usage(totals: dict[str, int], usage) -> None:
+    for name in USAGE_FIELDS:
+        count = getattr(usage, name, None)
+        if count:
+            totals[name] = totals.get(name, 0) + count
+
+
 def extract_pdf(
     client: genai.Client,
     pdf_path: Path,
     prompt_text: str,
     model: str,
     thinking_level: str,
-) -> PDFExtraction:
+) -> tuple[PDFExtraction, dict[str, int]]:
+    """Return the extraction and the token usage summed over every attempt that got a reply."""
     check_pdf_file(pdf_path)
 
     uploaded = client.files.upload(file=str(pdf_path))
@@ -58,6 +69,7 @@ def extract_pdf(
         )
 
         last_error = None
+        usage: dict[str, int] = {}
 
         for attempt in range(MAX_ATTEMPTS):
             try:
@@ -79,7 +91,9 @@ def extract_pdf(
                     },
                 )
 
-                return PDFExtraction.model_validate_json(interaction.output_text)
+                # A reply that fails validation below is still billed, so count it first.
+                _add_usage(usage, getattr(interaction, "usage", None))
+                return PDFExtraction.model_validate_json(interaction.output_text), usage
 
             except Exception as exc:
                 last_error = exc
