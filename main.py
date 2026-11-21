@@ -7,25 +7,16 @@ import sys
 
 from dotenv import load_dotenv
 
-from pipeline import (  # noqa: F401  (names kept importable from main for compatibility)
-    DEFAULT_MODEL,
-    DEFAULT_THINKING_LEVEL,
+from pipeline import (
     ENV_PATH,
     EXTRACTED_DIR,
     INPUT_DIR,
     OUTPUT_DIR,
-    PROMPT_PATH,
-    ROOT,
     SOURCE_LINKS_PATH,
-    cached_extraction,
-    extract_or_load,
     get_api_key,
-    load_prompt,
     load_source_links,
     make_client,
-    records_for,
     run_batch,
-    save_cache,
 )
 from friendly_errors import describe_save_error
 from spreadsheet import MASTER_FILENAME, build_master_rows, replace_master
