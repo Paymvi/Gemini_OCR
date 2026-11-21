@@ -66,6 +66,8 @@ Double-click **`Open OCR App.bat`**. A small black window flashes, then the app 
 
 If it says **the app is not set up on this computer yet**, run `Setup.bat` first.
 
+**Need help inside the app?** Click the orange **?** character in the top-right corner, or press **F1**. Pick a topic and it points at each button and explains it, one step at a time (**Back**, **Next**, **Close**). It only explains: it never processes, saves or changes anything. You can hide it with **Hide me**; press F1, or tick **Show the ? help button** in **Settings…**, to bring it back.
+
 ## 5. Use the app
 
 The pictures below use made-up files and names.

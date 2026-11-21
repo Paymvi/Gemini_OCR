@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 APP_FILES = [
     "gui.py",
+    "helper.py",
+    "tutorials.py",
     "main.py",
     "pipeline.py",
     "extractor.py",

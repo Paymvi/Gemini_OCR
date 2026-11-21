@@ -168,6 +168,8 @@ Within a merged contact:
 - **Review and correct:** shows the merged contacts. "Needs review" means a `*_Confident` flag is `FALSE` or a name is blank. Ticking or unticking **Needs review** for a field sets its `*_Confident` column.
 - **Save:** writes a new `output/contacts_<timestamp>.xlsx` with the same columns and formatting as the master file, plus a **Files** sheet that lists every PDF and whether it failed. Files are created with exclusive-create, so an existing file is never replaced.
 
+- **Help:** the **?** character in the header (or F1) opens short "Show me how" tutorials that highlight each control. They only explain; they never click, process or save. Tutorial text lives in [tutorials.py](tutorials.py) and the drawing and step runner in [helper.py](helper.py). Hiding the character is remembered as `HELPER_HIDDEN=1` in `.env`, like `NIGHT_MODE` and `SIMPLE_VIEW`.
+
 The advanced **Replace master list** mode writes `output/master_contacts.xlsx`. It asks for confirmation and copies the old file to `output/backups/` first.
 
 | Launcher | What it does |

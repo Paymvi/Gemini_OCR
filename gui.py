@@ -24,6 +24,7 @@ import tkinter.font as tkfont
 from dotenv import load_dotenv, set_key
 
 import pipeline
+from helper import Helper
 from friendly_errors import describe_error, describe_save_error, scrub
 from spreadsheet import (
     FIELD_COLUMNS,
@@ -271,6 +272,8 @@ class App:
         self.btn_details.grid(row=0, column=4, rowspan=2, padx=(0, px(6)))
         settings = ttk.Button(header, text="Settings…", command=self.open_settings)
         settings.grid(row=0, column=5, rowspan=2)
+        self.helper = Helper(self, header, column=6)
+        Tooltip(self.helper.launcher, "Help and tutorials (F1)", px(300))
         self._tip(self.btn_simple, "Switch between this simple view and the classic, detailed view.")
         self._tip(self.btn_night, "Switch between night mode and day mode.")
         self._tip(self.btn_details, "Show details: technical messages (also saved in logs\\app.log).")
@@ -438,6 +441,20 @@ class App:
                                state="disabled", relief="flat")
         self.details.grid(row=0, column=0, sticky="ew")
         self.details_open = False
+        # Stable ids the "?" helper's tutorials point at (names in tutorials.TARGETS).
+        self.targets = {
+            "helper": self.helper.launcher, "settings": settings, "btn_simple": self.btn_simple,
+            "btn_night": self.btn_night, "btn_details": self.btn_details, "details": self.details_frame,
+            "add_section": files, "btn_choose": self.btn_choose, "btn_input": self.btn_input,
+            "btn_remove": self.btn_remove, "btn_clear": self.btn_clear, "file_list": self.file_tree,
+            "process_section": proc, "btn_process": self.btn_process, "btn_stop": self.btn_stop,
+            "progress": self.progress, "progress_label": self.progress_label,
+            "failure_label": self.failure_label, "review_section": review, "summary": self.summary_label,
+            "only_review": only, "review_list": self.review_tree, "btn_edit": self.btn_edit,
+            "btn_check": self.btn_check, "btn_source": self.btn_source, "save_section": save,
+            "radio_new": radio_new, "radio_master": radio_master, "btn_save": self.btn_save,
+            "save_status": self.save_status, "btn_open": self.btn_open, "btn_folder": btn_folder,
+        }
         self.apply_theme()
 
     def apply_theme(self) -> None:
@@ -520,6 +537,7 @@ class App:
         self._label_toggles()
         self.refresh_key_label()
         self.refresh_review()
+        self.helper.restyle()
 
     def _round_corners(self, style: ttk.Style, c: dict, simple: bool) -> None:
         """Simple view draws buttons and section boxes with rounded corners (images, since ttk has no
@@ -1234,9 +1252,13 @@ class SettingsDialog(tk.Toplevel):
                   ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(px(4), 0))
         self.test_label = ttk.Label(frame, wraplength=wrap, justify="left")
         self.test_label.grid(row=4, column=0, columnspan=3, sticky="w", pady=(px(8), 0))
+        show_helper = tk.BooleanVar(value=not app.helper.hidden)
+        ttk.Checkbutton(frame, text="Show the ? help button (top right). Changes right away.",
+                        variable=show_helper, command=lambda: app.helper.set_hidden(not show_helper.get())
+                        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(px(8), 0))
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(px(10), 0))
+        buttons.grid(row=6, column=0, columnspan=3, sticky="e", pady=(px(10), 0))
         self.btn_test = ttk.Button(buttons, text="Test key", command=self.test)
         self.btn_test.pack(side="left")
         ttk.Button(buttons, text="Save", style="Primary.TButton", command=self.save
