@@ -58,21 +58,20 @@ def extract_pdf(
     """Return the extraction and the token usage summed over every attempt that got a reply."""
     check_pdf_file(pdf_path)
 
-    uploaded = client.files.upload(file=str(pdf_path))
+    full_prompt = (
+        prompt_text.rstrip()
+        + "\n\nSource PDF filename: "
+        + pdf_path.name
+        + "\nUse the PDF's 1-based page numbers for individual_page/supporting_pages."
+    )
+    uploaded = None
+    usage: dict[str, int] = {}
 
     try:
-        full_prompt = (
-            prompt_text.rstrip()
-            + "\n\nSource PDF filename: "
-            + pdf_path.name
-            + "\nUse the PDF's 1-based page numbers for individual_page/supporting_pages."
-        )
-
-        last_error = None
-        usage: dict[str, int] = {}
-
         for attempt in range(MAX_ATTEMPTS):
             try:
+                if uploaded is None:  # inside the loop, so a network blip during upload is retried too
+                    uploaded = client.files.upload(file=str(pdf_path))
                 interaction = client.interactions.create(
                     model=model,
                     input=[
@@ -96,15 +95,15 @@ def extract_pdf(
                 return PDFExtraction.model_validate_json(interaction.output_text), usage
 
             except Exception as exc:
-                last_error = exc
                 if attempt == MAX_ATTEMPTS - 1 or _is_permanent(exc):
                     raise
                 time.sleep(2 ** (attempt + 1))
 
-        raise last_error  # pragma: no cover
+        raise AssertionError("unreachable")  # pragma: no cover
 
     finally:
-        try:
-            client.files.delete(name=uploaded.name)
-        except Exception:
-            pass
+        if uploaded is not None:
+            try:
+                client.files.delete(name=uploaded.name)
+            except Exception:
+                pass

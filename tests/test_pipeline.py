@@ -93,6 +93,26 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(client.creates), extractor.MAX_ATTEMPTS)
         self.assertEqual(client.deletes, 1)
 
+    def test_failed_upload_is_retried(self):
+        pdf = write_pdf(self.tmp / "x.pdf")
+        client = FakeClient({"x.pdf": extraction_json(record_dict())})
+        real_upload, calls = client.files.upload, []
+
+        def flaky_upload(file):
+            calls.append(file)
+            if len(calls) == 1:
+                raise ConnectionError("network blip")
+            return real_upload(file)
+
+        client.files.upload = flaky_upload
+        result, _ = self.extract(client, pdf)
+        self.assertEqual((len(calls), len(result.records), client.deletes), (2, 1, 1))
+
+    def test_client_has_a_time_limit(self):
+        with mock.patch.object(pipeline.genai, "Client") as client:
+            pipeline.make_client("fake-key")
+        self.assertEqual(client.call_args.kwargs["http_options"].timeout, pipeline.REQUEST_TIMEOUT_MS)
+
     def test_partial_failure_keeps_other_files(self):
         good1 = write_pdf(self.tmp / "good one.pdf", "1")
         broken = self.tmp / "broken.pdf"

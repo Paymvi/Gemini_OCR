@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from google import genai
+from google.genai import types
 
 from extractor import extract_pdf
 from models import PDFExtraction
@@ -47,8 +48,13 @@ def get_thinking_level() -> str:
     return os.getenv("GEMINI_THINKING_LEVEL", DEFAULT_THINKING_LEVEL)
 
 
+# Without a limit a stalled connection waits forever and "Stop after this file" never takes effect.
+# 10 minutes leaves room for large scans. A time-out is reported as "No connection to Gemini".
+REQUEST_TIMEOUT_MS = 10 * 60 * 1000
+
+
 def make_client(api_key: str) -> genai.Client:
-    return genai.Client(api_key=api_key)
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
 
 
 def load_prompt(prompt_path: Path = PROMPT_PATH) -> tuple[str, str]:
