@@ -10,10 +10,13 @@ from typing import Any
 
 from dateutil import parser as date_parser
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+
+MAX_PRIOR_LINKS = 11
 
 HEADERS = [
     "Organization",
@@ -45,7 +48,7 @@ HEADERS = [
     "Visit Count",
     "Visit_Count_Confident",
     "Source_PDF_Link",
-    *[f"Prior_Visit_{i}_Link" for i in range(1, 12)],
+    *[f"Prior_Visit_{i}_Link" for i in range(1, MAX_PRIOR_LINKS + 1)],
 ]
 
 FIELD_COLUMNS = [
@@ -256,10 +259,14 @@ def build_master_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row["Visit_Count_Confident"] = identity_confident
         row["Source_PDF_Link"] = latest["source_link"]
 
-        for i in range(1, 12):
+        for i in range(1, MAX_PRIOR_LINKS + 1):
             row[f"Prior_Visit_{i}_Link"] = (
                 prior[i - 1]["source_link"] if i <= len(prior) else ""
             )
+        unlinked = len(prior) - MAX_PRIOR_LINKS
+        if unlinked > 0:
+            note = f"{unlinked} more earlier visit(s) not linked; see Visit Count."
+            row["Notes"] = f"{row['Notes']}\n{note}" if row["Notes"] else note
 
         # Underscore keys are for the desktop app's review table; they are not in HEADERS,
         # so the workbook never contains them.
@@ -325,7 +332,9 @@ def _build_workbook(
     header_index = {name: i + 1 for i, name in enumerate(HEADERS)}
 
     for row_data in rows:
-        ws.append([row_data.get(header, "") for header in HEADERS])
+        # Excel refuses control characters (e.g. \x0b) and openpyxl would fail the whole save.
+        ws.append([ILLEGAL_CHARACTERS_RE.sub("", value) if isinstance(value, str) else value
+                   for value in (row_data.get(header, "") for header in HEADERS)])
         row_number = ws.max_row
         for cell in ws[row_number]:
             if cell.data_type == "f":  # openpyxl turns text starting with "=" into a formula
@@ -342,7 +351,7 @@ def _build_workbook(
                 ws.cell(row=row_number, column=header_index[value_col]).fill = review_fill
                 ws.cell(row=row_number, column=header_index[confident_col]).fill = false_fill
 
-        for link_col in ["Source_PDF_Link", *[f"Prior_Visit_{i}_Link" for i in range(1, 12)]]:
+        for link_col in ["Source_PDF_Link", *[f"Prior_Visit_{i}_Link" for i in range(1, MAX_PRIOR_LINKS + 1)]]:
             cell = ws.cell(row=row_number, column=header_index[link_col])
             if isinstance(cell.value, str) and cell.value:
                 cell.hyperlink = cell.value

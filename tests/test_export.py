@@ -98,6 +98,18 @@ class ExportTests(unittest.TestCase):
         self.assertEqual((notes.value, notes.data_type), ("=see form", "s"))
         self.assertEqual((org.value, org.data_type), ('=HYPERLINK("x")', "s"))
 
+    def test_invisible_control_characters_do_not_block_saving(self):
+        rows = build_master_rows(metas(record_dict("Ann", "Lee", notes="line1\x0bline2")))
+        path = save_rows_as_new(rows, self.out, now=NOW)
+        self.assertEqual(self.sheet(path).cell(row=2, column=HEADERS.index("Notes") + 1).value, "line1line2")
+
+    def test_visits_beyond_the_link_columns_are_noted(self):
+        rows = build_master_rows(metas(*[record_dict(page=p) for p in range(1, 15)]))  # 14 visits
+        (row,) = rows
+        self.assertEqual(row["Visit Count"], 14)
+        self.assertTrue(row["Prior_Visit_11_Link"])
+        self.assertIn("2 more earlier visit(s) not linked", row["Notes"])
+
     def test_table_and_sheet_filter_do_not_overlap(self):
         ws = self.sheet(save_rows_as_new(self.rows, self.out, now=NOW))
         self.assertEqual(list(ws.tables), ["MasterContactsTable"])
