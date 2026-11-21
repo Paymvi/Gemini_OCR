@@ -124,10 +124,36 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertIn(("bad.pdf", "Failed", 0, "bad.pdf is not a PDF file, or it is damaged."),
                       list(wb["Files"].iter_rows(min_row=2, values_only=True)))
         self.assertFalse(self.app.unsaved)
+        self.assertFalse(self.app.draft_path.exists())  # saved, so no backup copy is left behind
 
         self.app.save_spreadsheet()  # second save -> second file, first untouched
         self.assertNotEqual(self.app.last_saved, saved)
         self.assertEqual(len(list((self.tmp / "output").glob("contacts_*.xlsx"))), 2)
+
+    def test_unsaved_corrections_survive_a_crash(self):
+        good = write_pdf(self.tmp / "good.pdf")
+        metas = pipeline.records_for(good, extraction(record_dict("Ada", "Lovelace", flagged=("city",))), {})
+        self.app._handle_event("finished", pipeline.BatchResult(metas, [pipeline.FileResult(good, "done", 1)]))
+        self.app.review_tree.selection_set("0")
+        self.app.mark_checked()
+        self.assertTrue(self.app.draft_path.exists())
+        self.assertNotIn(self.tmp / "output", self.app.draft_path.parents)  # not among the spreadsheets
+
+        self.root.destroy()  # crash: no save, no close prompt
+        self.root = gui.TkinterDnD.Tk() if gui.TkinterDnD else tk.Tk()
+        self.root.withdraw()
+        self.boxes["askyesno"].return_value = True  # "Restore them?" -> Yes
+        app = gui.App(self.root, output_dir=self.tmp / "output")
+        self.assertEqual(gui.row_status(app.rows[0]), "Checked")
+        self.assertTrue(app.unsaved)
+        self.assertIn("Restored 1", app.progress_label.cget("text"))
+
+        self.boxes["askyesno"].return_value = False  # restart again, choose No: the copy is deleted
+        self.root.destroy()
+        self.root = gui.TkinterDnD.Tk() if gui.TkinterDnD else tk.Tk()
+        self.root.withdraw()
+        self.assertEqual(gui.App(self.root, output_dir=self.tmp / "output").rows, [])
+        self.assertFalse(app.draft_path.exists())
 
     def test_master_mode_needs_confirmation(self):
         good = write_pdf(self.tmp / "good.pdf")

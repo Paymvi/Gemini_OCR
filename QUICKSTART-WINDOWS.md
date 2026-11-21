@@ -112,7 +112,7 @@ In the correction window, the fields to check are yellow and ticked **Needs revi
 
 <img src="docs/screenshots/3-edit-contact.png" alt="Edit contact window; the Email and Phone Number fields are yellow with Needs review ticked" width="520">
 
-Your corrections go into the spreadsheet when you save.
+Your corrections go into the spreadsheet when you save. Until then the app keeps a backup copy, so if the app or computer closes unexpectedly, it offers to restore your contacts and corrections the next time it opens.
 
 **4. Save**
 

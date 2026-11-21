@@ -5,6 +5,7 @@ the command-line tool (main.py) uses. Start it with "Open OCR App.bat" or `pytho
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import queue
@@ -197,6 +198,8 @@ class App:
     def __init__(self, root: tk.Tk, output_dir: Path = pipeline.OUTPUT_DIR):
         self.root = root
         self.output_dir = output_dir
+        # Next to the extraction cache: already private, never copied by Prepare Distribution.
+        self.draft_path = output_dir.parent / pipeline.EXTRACTED_DIR.name / "unsaved_contacts.json"
         self.items: list[PdfItem] = []
         self.rows: list[dict] = []
         self.files_summary: list[tuple[str, str, int, str]] = []
@@ -223,6 +226,7 @@ class App:
         self.refresh_review()
         self.refresh_key_label()
         self._update_save_hint()
+        self._offer_draft()
         if not pipeline.get_api_key():
             root.after(400, lambda: self.open_settings(first_time=True))
 
@@ -648,6 +652,52 @@ class App:
         self.details.see("end")
         self.details.configure(state="disabled")
 
+    def _save_draft(self) -> None:
+        """Keep unsaved contacts and corrections on disk, so a crash or restart doesn't lose them."""
+        try:
+            self.draft_path.parent.mkdir(parents=True, exist_ok=True)
+            temp = self.draft_path.with_suffix(".tmp")
+            temp.write_text(json.dumps({"rows": self.rows, "files_summary": self.files_summary},
+                                       ensure_ascii=False), encoding="utf-8")
+            os.replace(temp, self.draft_path)
+        except (OSError, TypeError, ValueError) as exc:
+            self.note("Could not keep a backup copy of the unsaved contacts.", f"{type(exc).__name__}: {exc}",
+                      logging.WARNING)
+
+    def _drop_draft(self) -> None:
+        try:
+            self.draft_path.unlink(missing_ok=True)
+        except OSError as exc:
+            self.note("Could not remove the backup copy of unsaved contacts.", f"{type(exc).__name__}: {exc}",
+                      logging.WARNING)
+
+    def _offer_draft(self) -> None:
+        if not self.draft_path.exists():
+            return
+        try:
+            data = json.loads(self.draft_path.read_text(encoding="utf-8"))
+            rows = data["rows"]
+            summary = [tuple(item) for item in data.get("files_summary", [])]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.note("A backup copy of unsaved contacts could not be read.", f"{type(exc).__name__}: {exc}",
+                      logging.WARNING)
+            return
+        if not rows:
+            self._drop_draft()
+            return
+        if not messagebox.askyesno(
+                "Restore unsaved contacts?",
+                f"{len(rows)} contact(s) from last time were never saved to a spreadsheet, for example "
+                "because the app or computer closed unexpectedly. Your corrections are included.\n\n"
+                "Restore them? If you choose No, they are deleted.", parent=self.root):
+            self._drop_draft()
+            return
+        self.rows, self.files_summary, self.unsaved = rows, summary, True
+        self.progress_label.configure(text=f"Restored {len(rows)} unsaved contact(s) from last time. "
+                                           "Review them, then save in section 4.")
+        self.note(f"Restored {len(rows)} unsaved contact(s) from the backup copy.")
+        self.refresh_review()
+
     def toggle_details(self) -> None:
         self.details_open = not self.details_open
         if self.details_open:
@@ -815,6 +865,7 @@ class App:
         self.refresh_files()
         self.rows, self.files_summary = [], []
         self.unsaved, self.results_stale, self.last_saved, self.run_problem = False, False, None, None
+        self._drop_draft()  # the person agreed above to replace these contacts
         self.save_status.configure(text="Not saved yet.")
         self.failure_label.grid_remove()
         self.refresh_review()
@@ -901,6 +952,8 @@ class App:
         self.files_summary = [(f.path.name, SUMMARY_STATUS[f.status], f.waivers, f.message)
                               for f in result.files]
         self.unsaved = bool(self.rows)
+        if self.unsaved:
+            self._save_draft()
         not_read = [f for f in result.files if f.status != "done"]
         done = len(result.files) - len(not_read)
         stopped = " Stopped early." if self.stop_event.is_set() else ""
@@ -963,6 +1016,7 @@ class App:
             return
         if EditDialog(self, rows[0]).changed:
             self.unsaved = True
+            self._save_draft()
             self.refresh_review()
 
     def mark_checked(self) -> None:
@@ -979,6 +1033,7 @@ class App:
                 row[confident_col] = True
             row["_checked"] = True
         self.unsaved = True
+        self._save_draft()
         self.refresh_review()
 
     def open_selected_source(self) -> None:
@@ -1047,6 +1102,7 @@ class App:
             return
 
         self.last_saved, self.unsaved = path, False
+        self._drop_draft()
         self.save_status.configure(text=f"Saved: {path.name}")
         self.note(f"Saved {len(self.rows)} contact(s) to {path}.")
         if messagebox.askyesno("Spreadsheet saved", f"Saved to:\n{path}\n\nOpen it now?", parent=self.root):
@@ -1104,13 +1160,16 @@ class App:
         if self.running:
             if not messagebox.askyesno("Processing is still running",
                                        "Close anyway? The file being read right now will not be finished. "
-                                       "Files that already finished are kept and won't be charged again.",
+                                       "Files that already finished are kept and won't be charged again. "
+                                       "Google deletes its copy of the unfinished file within 48 hours.",
                                        icon="warning", parent=self.root):
                 return
-        elif self.unsaved and not messagebox.askyesno(
-                "Close without saving?", "These contacts have not been saved to a spreadsheet, and "
-                "corrections you made will be lost. Close anyway?", icon="warning", parent=self.root):
-            return
+        elif self.unsaved:
+            if not messagebox.askyesno(
+                    "Close without saving?", "These contacts have not been saved to a spreadsheet, and "
+                    "corrections you made will be lost. Close anyway?", icon="warning", parent=self.root):
+                return
+            self._drop_draft()  # a deliberate "close without saving"
         self.root.destroy()
 
 

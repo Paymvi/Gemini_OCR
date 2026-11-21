@@ -150,6 +150,7 @@ Within a merged contact:
 | --- | --- | --- |
 | `input/` | Your source PDFs | Never changed or deleted by the tool |
 | `extracted/<pdf name>-<hash>.json` | Extracted personal data for each PDF, plus the model name and a prompt hash | Kept until you delete it |
+| `extracted/unsaved_contacts.json` | Desktop app: contacts and corrections not yet saved to a spreadsheet, so a crash or restart doesn't lose them | Deleted when you save, choose not to restore, or close without saving |
 | `output/master_contacts.xlsx` | The merged contact list | Replaced on each CLI run (old copy kept in `output/backups/`) |
 | `output/contacts_<date>_<time>.xlsx` | One file per desktop-app save | Never overwritten; kept until you delete it |
 | `output/backups/` | Previous master lists (CLI runs and the desktop app's "Replace master list" mode) | Kept until you delete it |
