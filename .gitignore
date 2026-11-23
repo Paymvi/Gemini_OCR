@@ -9,8 +9,9 @@ extracted/
 output/
 source_links.json
 
-# Local cost analysis report. Not part of the app.
+# Local cost analysis report and its changelog. Not part of the app.
 GEMINI_OCR_COST_ANALYSIS.md
+GEMINI_OCR_COST_CHANGES.md
 
 # Desktop app logs and clean distribution copies.
 logs/
